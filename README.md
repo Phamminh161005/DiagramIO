@@ -28,6 +28,7 @@ Pha 1 không làm: giao diện frontend và canvas; cộng tác thời gian th�
 |---|---|
 | Ngôn ngữ, framework | Java 21, Spring Boot 3.4 (Web, Validation, Security) |
 | CSDL | PostgreSQL 16, Spring Data JPA, Flyway quản lý schema |
+| Đo lường | Spring Boot Actuator, Micrometer Prometheus (cổng quản trị riêng, chỉ localhost); bộ đo k6 trong `bench/` |
 | Xác thực | JWT (jjwt), BCrypt, refresh token lưu dạng SHA-256 |
 | Tài liệu API | springdoc-openapi (Swagger UI) |
 | Đóng gói | Docker, Docker Compose |
@@ -171,6 +172,8 @@ Một số việc thường làm khác:
 - Thay đổi CSDL: thêm file migration mới dạng `V<số>__mo_ta.sql` (hai dấu gạch dưới) trong `src/main/resources/db/migration`, không sửa các file đã có.
 
 ## 6. Kiểm thử tải trên Kaggle
+
+> Pha 2 đo lại bằng bộ đo mới trong [bench/](bench/README.md) (k6 với mô hình tải mở, dữ liệu 50.000 sơ đồ, số liệu phía server, CPU tách riêng cho máy tạo tải); phương pháp ở [ADR-0001](docs/adr/0001-phuong-phap-do.md), đánh giá hiện trạng ở [docs/pha-2/danh-gia-hien-trang.md](docs/pha-2/danh-gia-hien-trang.md). Số liệu pha 1 dưới đây chỉ để tham khảo, không so trực tiếp với pha 2.
 
 Link notebook: https://www.kaggle.com/code/minhwayne/diagramio
 

@@ -165,6 +165,7 @@ Một số việc thường làm khác:
   - Unit test và test controller (MockMvc): chạy được ở mọi máy.
   - Test CSDL trong `infrastructure` (Testcontainers): không có Docker thì tự bỏ qua.
   - Test E2E hộp đen trong `src/test/java/com/diagramio/e2e`: khởi động cả app trên cổng ngẫu nhiên với PostgreSQL thật và chỉ gọi API qua HTTP, kiểm tra mọi endpoint với từng vai trò (chủ, link edit, link view, người khác, khách). Nhóm này cố ý báo lỗi khi không có Docker để không "xanh giả". Chạy riêng: `./mvnw test -Dtest='com.diagramio.e2e.**'`; bỏ qua: `./mvnw test -Dtest='!com.diagramio.e2e.**'`.
+  - `SqlPerRequestE2eTest` (trong nhóm E2E) đếm câu SQL, transaction và số lần chở `data` của từng endpoint, ghi bảng ra `target/bench/sql-per-request.md`; thay đổi làm đổi các con số này thì sửa con số trong test cùng PR.
   - Dùng JDK mới hơn 21 (ví dụ 25) thì thêm `-DargLine="-Dnet.bytebuddy.experimental=true"` để Mockito chạy được.
 - Xuất lại đặc tả API sau khi đổi endpoint (app đang chạy): `curl -o docs/openapi.yaml http://localhost:8080/v3/api-docs.yaml`. Khóa được sắp xếp cố định và server là URL tương đối, nên file chỉ thay đổi khi API thay đổi; diff khác rỗng nghĩa là phải commit lại file này.
 - Thay đổi CSDL: thêm file migration mới dạng `V<số>__mo_ta.sql` (hai dấu gạch dưới) trong `src/main/resources/db/migration`, không sửa các file đã có.

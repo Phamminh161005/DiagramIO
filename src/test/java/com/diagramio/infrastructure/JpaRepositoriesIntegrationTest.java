@@ -16,6 +16,7 @@ import com.diagramio.infrastructure.diagram.DiagramRepositoryAdapter;
 import com.diagramio.infrastructure.share.DiagramShareMapper;
 import com.diagramio.infrastructure.share.DiagramShareRepositoryAdapter;
 import com.diagramio.infrastructure.version.DiagramVersionRepositoryAdapter;
+import com.diagramio.TestDatabase;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
@@ -43,7 +44,7 @@ class JpaRepositoriesIntegrationTest {
 
     @Container
     @ServiceConnection
-    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:15-alpine");
+    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>(TestDatabase.POSTGRES_IMAGE);
 
     /** Người dùng mẫu được seed trong V2. */
     private static final UUID SEED_USER = UUID.fromString("11111111-1111-1111-1111-111111111111");

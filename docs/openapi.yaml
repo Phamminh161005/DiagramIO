@@ -933,7 +933,6 @@ components:
       properties:
         currentPassword:
           type: string
-          maxLength: 255
           minLength: 1
         newPassword:
           type: string
@@ -1053,9 +1052,8 @@ components:
             edges: []
         diagramId:
           type: string
-          maxLength: 255
-          minLength: 1
-        diagramType:
+          format: uuid
+        id:
           type: string
           format: uuid
         note:

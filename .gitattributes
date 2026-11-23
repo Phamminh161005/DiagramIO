@@ -1,0 +1,5 @@
+# Script chạy trên Linux (Kaggle, WSL, Docker) phải giữ xuống dòng LF kể cả khi checkout trên Windows
+*.sh text eol=lf
+mvnw text eol=lf
+bench/**/*.py text eol=lf
+bench/**/*.js text eol=lf

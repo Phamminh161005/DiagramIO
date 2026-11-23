@@ -141,6 +141,8 @@ CSDL dùng PostgreSQL 16 (cùng phiên bản với máy đo Kaggle). Volume tạ
 
 Chạy app từ IDE khi đang phát triển: chạy riêng CSDL bằng `docker compose up -d postgres`, rồi chạy `DiagramioApplication` (hoặc `./mvnw spring-boot:run`). App tự đọc file `.env`, nên `SPRING_DATASOURCE_URL` phải trỏ đúng cổng `POSTGRES_PORT`. Hai cách chạy dùng chung cổng 8080, không chạy cùng lúc.
 
+Số liệu cho việc đo hiệu năng (Spring Boot Actuator) nằm trên cổng quản trị riêng, chỉ nghe `127.0.0.1`: `http://127.0.0.1:9090/actuator/prometheus` và `/actuator/health` (đổi cổng bằng `MANAGEMENT_PORT`). Cổng API không có endpoint Actuator nào; trong container, cổng quản trị không mở ra ngoài.
+
 | Biến trong `.env` | Ý nghĩa |
 |---|---|
 | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | Tài khoản và tên CSDL; mật khẩu chỉ có tác dụng ở lần đầu tạo volume |

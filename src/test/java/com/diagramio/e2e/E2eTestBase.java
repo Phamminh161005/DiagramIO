@@ -17,6 +17,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.function.Predicate;
+import org.springframework.boot.test.autoconfigure.actuate.observability.AutoConfigureObservability;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
@@ -29,8 +30,13 @@ import org.testcontainers.containers.PostgreSQLContainer;
  * <p>The container is a JVM-wide singleton started in a static block (not {@code @Container}),
  * so every E2E class shares one container and one cached Spring context. If Docker is not
  * available the static block throws and the suite fails loudly instead of being skipped.
+ *
+ * <p>Spring Boot tests turn metrics export off by default; {@code @AutoConfigureObservability}
+ * turns it back on so the app runs as in production, including the Prometheus registry on the
+ * management port (random in tests, see {@code LocalManagementPort}).
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@AutoConfigureObservability(tracing = false)
 public abstract class E2eTestBase {
 
     @ServiceConnection

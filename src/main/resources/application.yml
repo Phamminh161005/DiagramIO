@@ -16,6 +16,32 @@ spring:
 server:
   # Sau proxy/load balancer: dùng X-Forwarded-Host/Proto để ghép đúng địa chỉ bên ngoài (vd. shareUrl)
   forward-headers-strategy: framework
+  tomcat:
+    # Cần cho số liệu luồng Tomcat (tomcat.threads.busy, tomcat.threads.current)
+    mbeanregistry:
+      enabled: true
+
+# Số liệu phía server cho phép đo pha 2 (docs/adr/0001-phuong-phap-do.md).
+# Actuator chạy trên cổng quản trị riêng và chỉ nghe localhost, nên không lộ ra ngoài qua cổng API;
+# SecurityConfig chỉ mở /actuator/health và /actuator/prometheus khi cổng quản trị khác cổng API.
+# Chạy nhiều bản app trên một máy thì mỗi bản đặt MANAGEMENT_PORT riêng.
+management:
+  server:
+    port: ${MANAGEMENT_PORT:9090}
+    address: 127.0.0.1
+  endpoints:
+    web:
+      exposure:
+        include: [health, prometheus]
+  metrics:
+    distribution:
+      # Bucket histogram cho thời gian xử lý mỗi request, để tính p95 phía server theo từng cửa sổ thời gian
+      percentiles-histogram:
+        http.server.requests: true
+      minimum-expected-value:
+        http.server.requests: 1ms
+      maximum-expected-value:
+        http.server.requests: 10s
 
 springdoc:
   # Sắp xếp khóa cố định để docs/openapi.yaml xuất lại không bị đổi thứ tự

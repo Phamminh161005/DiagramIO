@@ -99,6 +99,7 @@
 - Add or update tests for authentication, authorization, public/private access, sharing-token revocation, invalid payloads, optimistic-lock conflicts, immutable versions, and safe restoration.
 - Include both successful and denied paths for owner, editor, viewer, unauthenticated, and public requests.
 - Verify status codes and response shapes, not only whether a request succeeds.
+- `SqlPerRequestE2eTest` pins the SQL statements, commits, pool checkouts, and `data` round trips of every endpoint. A change that alters them must update the expected numbers in the same PR; performance claims are measured with `bench/` (see `docs/adr/0001-phuong-phap-do.md`).
 - Run the smallest relevant formatter, linter, type checker, and test commands before considering a change complete.
 - Use the repository's documented commands and configuration; do not invent replacement tooling without a clear need.
 

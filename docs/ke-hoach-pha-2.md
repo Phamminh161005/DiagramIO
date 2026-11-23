@@ -3,7 +3,8 @@
 | | |
 |---|---|
 | Trạng thái | Đề xuất, chờ nhóm duyệt |
-| Mốc so sánh (baseline) | `main` tại commit `35503aa`, gắn tag `v1.0-phase1` trước khi bắt đầu |
+| Tiến độ | M0: bộ đo và các phép đo không phụ thuộc phần cứng đã xong ([danh-gia-hien-trang.md](pha-2/danh-gia-hien-trang.md), [ADR-0001](adr/0001-phuong-phap-do.md), [bench/](../bench/README.md)); còn chạy ma trận `m0` trên Kaggle |
+| Mốc so sánh (baseline) | `main` tại commit `35503aa`, gắn tag `v1.0-phase1` trước khi bắt đầu. C0 của mọi phép so sánh là mã này cộng phần đo của M0 (Actuator, Micrometer; không đổi hành vi), gắn tag `v2.0-m0` |
 | Phần cứng đánh giá duy nhất | Kaggle Notebook CPU (4 vCPU, ~30 GB RAM); ghi lại `lscpu` ở mỗi phiên |
 | Tài liệu liên quan | [README.md](../README.md), [AGENTS.md](../AGENTS.md), [luong-nghiep-vu.md](luong-nghiep-vu.md), [openapi.yaml](openapi.yaml) |
 
@@ -93,6 +94,7 @@ Các điểm khác:
 ### 3.1 Môi trường Kaggle
 
 - Kaggle không chạy được Docker, nên mọi thành phần được cài trực tiếp bằng `bench/kaggle/setup.sh`: JDK 21, PostgreSQL 16 (từ PGDG), Redis 7, Nginx, k6, async-profiler, sysstat. Notebook phải bật Internet. Docker Compose vẫn giữ cho máy dev; nâng image Postgres trong compose và Testcontainers lên 16 để khớp với Kaggle.
+  - *Đã làm ở M0:* `setup.sh` cài những gì M0 cần (PostgreSQL 16, JDK Temurin 21.0.13.1, k6 v2.3.0, async-profiler 4.6, có kiểm tra SHA-256); Redis và Nginx thêm vào ở M2, M3 khi bắt đầu dùng; `sysstat` được thay bằng `bench/collect/procstat.py` (mục 3.5). Image Kaggle CPU hiện dựng trên image Colab (Python 3.13), nên script tự nhận bản Ubuntu/Debian; đã chạy thử trên container Ubuntu 22.04 và 24.04.
 - Đầu mỗi phiên ghi `lscpu`, `nproc`, `free -h` và phiên bản phần mềm vào `bench/results/<lần chạy>/env.txt`.
 - **Phân CPU cố định cho mọi cấu hình**, ví dụ `taskset -c 0-2` cho hệ thống được đo (app, PostgreSQL, Redis, Nginx) và `taskset -c 3` cho công cụ tạo tải. Xem `lscpu -e` để biết cặp hyper-thread và ghi bố trí vào báo cáo.
 - JVM cố định: `-Xms2g -Xmx2g -XX:+UseG1GC -XX:ActiveProcessorCount=<số CPU được cấp>`. Cấu hình PostgreSQL (`shared_buffers`, `max_connections`, `shared_preload_libraries = pg_stat_statements`) đặt một lần trong `setup.sh` và dùng chung cho baseline lẫn bản cải tiến.
@@ -128,6 +130,7 @@ Dữ liệu được sinh xác định (seed cố định) bằng `bench/seed/ge
 ### 3.4 Công cụ, mô hình tải, thời lượng
 
 - **Công cụ chính là k6** (một file thực thi viết bằng Go). Lý do: tốn ít CPU hơn Locust nên ít tranh CPU với hệ thống được đo; có executor theo tốc độ đến (`constant-arrival-rate`, `ramping-arrival-rate`) cho mô hình tải mở; hỗ trợ WebSocket (cần cho B8); có `thresholds` để chấm đạt hay không đạt SLO. Locust chỉ giữ để chạy lại W1 đúng như pha 1 và kiểm tra hai công cụ cho kết quả khớp nhau ở tải thấp.
+  - *Đã làm ở M0:* không giữ Locust. Kịch bản Locust gốc chỉ có trong notebook Kaggle của pha 1, không có trong repo và không đọc được ngoài Kaggle, nên không thể chạy lại "đúng như pha 1"; W1 của k6 dựng lại cùng chuỗi 6 request và cùng mức tải 10/50/100 VU.
 - Mỗi cấu hình đo hai kiểu:
   - **Sức chứa:** tăng dần tốc độ đến (ví dụ từ 100 lên 3.000 req/s, mỗi bậc 60 s) cho tới khi p95 > 100 ms hoặc lỗi > 1%. Chỉ số chính là **throughput tối đa còn giữ được SLO**.
   - **Độ trễ ở tải cố định:** chạy ở vài mức (ví dụ 200, 500, 800 req/s), lấy p50, p95, p99, tỉ lệ lỗi, CPU.
@@ -138,6 +141,7 @@ Dữ liệu được sinh xác định (seed cố định) bằng `bench/seed/ge
 
 - Thêm `spring-boot-starter-actuator` và `micrometer-registry-prometheus`; mở `/actuator/prometheus` trên cổng quản trị riêng, chỉ nghe localhost. Bật histogram cho `http.server.requests`. Một script Python cào số liệu mỗi 5 s ra CSV, không cần dựng Prometheus hay Grafana trên Kaggle.
 - Chỉ số theo dõi: CPU từng tiến trình (`pidstat -u 5`), `hikaricp.connections.pending` và `active`, `jvm.gc.pause`, số luồng Tomcat đang bận, cache hit ratio, độ dài hàng đợi export, số phiên WebSocket.
+  - *Đã làm ở M0:* CPU từng tiến trình đọc thẳng `/proc` (`bench/collect/procstat.py`) thay cho `pidstat`, để gộp mọi backend của PostgreSQL thành một nhóm và ghi thêm `steal`, độ bận từng CPU. Số câu SQL mỗi request đo bằng test `SqlPerRequestE2eTest` thay cho profile `profiling` (số liệu xác định, không cần Kaggle), đối chiếu với `pg_stat_statements` trong mỗi lần đo.
 - PostgreSQL: gọi `pg_stat_statements_reset()` đầu mỗi lần chạy; cuối lần chạy xuất các câu lệnh tốn thời gian nhất và số lần gọi; ghi `pg_total_relation_size` của các bảng.
 - **Số câu SQL mỗi request:** chạy một lượt đếm riêng với `hibernate.generate_statistics` (hoặc datasource-proxy) ở profile `profiling`; không bật khi đo hiệu năng.
 - **Flame graph CPU** (async-profiler, 60 s ở giữa lượt đo) cho C0 và bản cuối trên W2, W3, để có hình trước và sau cho báo cáo.
@@ -205,6 +209,8 @@ bench/
 ├── analysis/report.py      gộp CSV thành bảng markdown và biểu đồ PNG
 └── results/<ngày>_<cấu hình>_<kịch bản>_<lần>/   summary CSV được commit, log thô thì không
 ```
+
+*Đã làm ở M0:* cấu trúc thực tế có thay đổi nhỏ, mô tả trong [bench/README.md](../bench/README.md): `start.sh` tách thành `build.sh`, `prepare_data.sh`, `run_one.sh` cùng `env.sh` dùng chung; W3 là `w2.js` chạy với `SIZE_CLASS=L`; không có thư mục `locust/` (mục 3.4); kết quả nằm ở `results/<thời điểm>-<ma trận>/<cấu hình>_<kịch bản>_<mô hình><mức>_r<lần>/`. W4-W7 thêm vào cùng các bài toán dùng chúng.
 
 Đầu ra của M0 là `docs/pha-2/danh-gia-hien-trang.md`: nút thắt thật, flame graph, số SQL mỗi request, CPU từng tiến trình. **Thứ tự B1–B8 ở mục 5 là tạm thời; nếu M0 chỉ ra nút thắt khác thì đổi ưu tiên theo số liệu.**
 
@@ -603,13 +609,14 @@ Báo cáo kết quả trình bày mọi bài toán theo cùng một khung: kịc
 ## 9. Checklist
 
 **M0 – Phép đo**
-- [ ] Gắn tag `v1.0-phase1`
-- [ ] `bench/kaggle/setup.sh` chạy được từ một notebook trắng
-- [ ] Seed dữ liệu, template DB, reset trước mỗi lần chạy
-- [ ] k6 W1–W3; Locust W1 của pha 1
-- [ ] Actuator + endpoint Prometheus + script cào số liệu; pidstat; `pg_stat_statements`
-- [ ] Đo lại C0, flame graph, bảng SQL mỗi request
-- [ ] `danh-gia-hien-trang.md`; chốt thứ tự ưu tiên
+- [ ] Gắn tag `v1.0-phase1` (commit `35503aa`) và `v2.0-m0` (commit M0, mốc C0)
+- [x] `bench/kaggle/setup.sh` chạy được từ một máy trắng (đã thử trên container Ubuntu 22.04 và 24.04; còn chạy thật trên Kaggle)
+- [x] Seed dữ liệu, template DB, reset trước mỗi lần chạy
+- [x] k6 W1–W3 (Locust W1 không làm, lý do ở mục 3.4)
+- [x] Actuator + endpoint Prometheus + script cào số liệu; CPU theo tiến trình (`procstat.py` thay `pidstat`); `pg_stat_statements`
+- [x] Bảng SQL mỗi request (`SqlPerRequestE2eTest`); công cụ flame graph
+- [ ] Đo lại C0 trên Kaggle (ma trận `m0`, khoảng 3 giờ) và điền mục 6 của `danh-gia-hien-trang.md`
+- [x] `danh-gia-hien-trang.md` phần không phụ thuộc phần cứng; thứ tự ưu tiên đề xuất (B1 trước, thứ tự mục con theo số đo)
 
 **Must**
 - [ ] B1: access info, UPDATE có điều kiện, snapshot và khôi phục trong DB, projection, `ORDER BY`, index, `Persistable`, tinh chỉnh runtime

@@ -6,6 +6,7 @@ import com.diagramio.domain.auth.RefreshToken;
 import com.diagramio.domain.user.User;
 import com.diagramio.infrastructure.auth.RefreshTokenRepositoryAdapter;
 import com.diagramio.infrastructure.user.UserRepositoryAdapter;
+import com.diagramio.TestDatabase;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.UUID;
@@ -33,7 +34,7 @@ class RepositoryAdaptersTest {
 
     @Container
     @ServiceConnection
-    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:15-alpine");
+    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>(TestDatabase.POSTGRES_IMAGE);
 
     @Autowired
     private UserRepositoryAdapter users;

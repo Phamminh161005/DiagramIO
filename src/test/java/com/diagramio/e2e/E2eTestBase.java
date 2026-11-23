@@ -2,6 +2,7 @@ package com.diagramio.e2e;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.diagramio.TestDatabase;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -33,7 +34,7 @@ import org.testcontainers.containers.PostgreSQLContainer;
 public abstract class E2eTestBase {
 
     @ServiceConnection
-    static final PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:15-alpine");
+    static final PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>(TestDatabase.POSTGRES_IMAGE);
 
     static {
         postgres.start();

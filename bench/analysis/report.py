@@ -218,7 +218,7 @@ def run_metrics(run: Run) -> dict:
     window = run.window
     if window and run.mode != "capacity":
         sut = [f"cpu{c}" for c in str(run.meta.get("sut_cpus", "")).split(",") if c != ""]
-        for group in ("app", "db", "loadgen"):
+        for group in ("app", "db", "cache", "loadgen"):
             m[f"cpu_{group}"] = run.proc_mean("cpu_cores", group, window)
         m["loadgen_max"] = run.proc_max("cpu_cores", "loadgen", window)
         m["steal"] = run.proc_mean("system_pct", "steal", window)
@@ -253,6 +253,8 @@ def run_metrics(run: Run) -> dict:
     m["checkpoints"] = pg["checkpoints"]
     m["top_sql"] = pg["statements"][:8]
     m["total_requests"] = total_requests
+    # resp_304 đếm cả warm-up, nên chia cho tổng request của cả lần chạy (cùng phạm vi)
+    m["share_304"] = 100.0 * m["r304"] / total_requests if total_requests else None
 
     if run.mode == "capacity":
         m["steps"] = capacity_steps(run)
@@ -485,7 +487,7 @@ def chart_ops(plt, out: Path, workload: str, level: str, per_config: dict, confi
 
 
 def chart_cpu(plt, out: Path, workload: str, groups: dict, configs: list[str]) -> str:
-    labels, parts = [], {"app": [], "db": [], "loadgen": []}
+    labels, parts = [], {"app": [], "db": [], "cache": [], "loadgen": []}
     for (cfg, level) in sorted(groups, key=lambda k: (configs.index(k[0]), level_key(k[1]))):
         ms = groups[(cfg, level)]
         labels.append(f"{cfg}\n{level}" if len(configs) > 1 else str(level))
@@ -494,7 +496,7 @@ def chart_cpu(plt, out: Path, workload: str, groups: dict, configs: list[str]) -
             parts[g].append(s[0] if s else 0)
     fig, ax = plt.subplots(figsize=(7.5, 4.2))
     bottom = [0.0] * len(labels)
-    names = {"app": "app (JVM)", "db": "PostgreSQL", "loadgen": "k6"}
+    names = {"app": "app (JVM)", "db": "PostgreSQL", "cache": "Redis", "loadgen": "k6"}
     for k, g in enumerate(parts):
         ax.bar(range(len(labels)), parts[g], bottom=bottom, color=SERIES[k], edgecolor=SURFACE, linewidth=2,
                label=names[g], width=0.6)
@@ -555,8 +557,11 @@ def write_report(session: Path, metrics: list[dict]) -> Path:
     if configs_txt.exists():
         for line in configs_txt.read_text().split("\n"):
             if line.strip():
-                cfg, ref, sha = line.split()
-                lines.append(f"- Cấu hình {cfg}: `{ref}` (commit `{sha[:10]}`)")
+                parts = line.split(maxsplit=3)   # cấu hình, ref, commit, [tham số app]
+                cfg, ref, sha = parts[:3]
+                args = f", tham số `{parts[3]}`" if len(parts) > 3 else ""
+                lines.append(f"- Cấu hình {cfg}: `{ref}` (commit `{sha[:10]}`){args}")
+    explain_lines = explain_tables(session)
     manifest_path = session / "manifest.json"
     if manifest_path.exists():
         man = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -565,6 +570,7 @@ def write_report(session: Path, metrics: list[dict]) -> Path:
                      f"({man['data_bytes']['diagrams'] / 2**20:.0f} MB data), {c['diagram_versions']} phiên bản, "
                      f"{c['diagram_shares']} link")
     lines.append("")
+    lines += explain_lines
 
     # ---- Tính hợp lệ
     lines += ["## Kiểm tra tính hợp lệ của phép đo", ""]
@@ -620,16 +626,18 @@ def write_report(session: Path, metrics: list[dict]) -> Path:
             lines += [f"### {title}", "", "Trung vị (min–max) qua các lần lặp, chỉ tính pha đo.", ""]
             head = "VU" if closed else "Tốc độ đến"
             lines += [f"| Cấu hình | {head} | Throughput (req/s) | p50 (ms) | p95 (ms) | p99 (ms) | Lỗi | "
-                      "CPU app | CPU PostgreSQL | CPU k6 | Server trung bình (ms) | SQL/request | Khối TOAST/request | Trúng cache |",
-                      "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+                      "CPU app | CPU PostgreSQL | CPU Redis | CPU k6 | Server trung bình (ms) | SQL/request | Khối TOAST/request | "
+                      "Trúng cache | 304 |",
+                      "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
             for (cfg, level) in sorted(groups, key=lambda k: (configs.index(k[0]), level_key(k[1]))):
                 ms = groups[(cfg, level)]
                 g = lambda key: spread([m.get(key) for m in ms])   # noqa: E731
                 lines.append(
                     f"| {cfg} | {level} | {fmt(g('rps'), 0)} | {fmt(g('p50'))} | {fmt(g('p95'))} | {fmt(g('p99'))} | "
                     f"{fmt(spread([100 * m['err'] for m in ms]), 2, '%')} | {fmt(g('cpu_app'), 2)} | "
-                    f"{fmt(g('cpu_db'), 2)} | {fmt(g('cpu_loadgen'), 2)} | {fmt(g('srv_mean'), 2)} | "
-                    f"{fmt(g('sql_per_req'), 2)} | {fmt(g('toast_per_req'), 1)} | {hit_ratio(ms)} |")
+                    f"{fmt(g('cpu_db'), 2)} | {fmt(g('cpu_cache'), 2)} | {fmt(g('cpu_loadgen'), 2)} | "
+                    f"{fmt(g('srv_mean'), 2)} | {fmt(g('sql_per_req'), 2)} | {fmt(g('toast_per_req'), 1)} | "
+                    f"{hit_ratio(ms)} | {fmt(g('share_304'), 1, '%')} |")
             lines.append("")
             lines += ["Phía server (trung vị qua các lần lặp). Transaction CSDL tính cả câu lệnh chạy autocommit, "
                       "mỗi câu như vậy là một transaction riêng ở PostgreSQL:", "",
@@ -698,10 +706,29 @@ def write_report(session: Path, metrics: list[dict]) -> Path:
     return report
 
 
+def explain_tables(session: Path) -> list[str]:
+    """Tóm tắt EXPLAIN (ANALYZE, BUFFERS) của từng cấu hình (bench/kaggle/explain.sh), nếu phiên có chạy."""
+    files = sorted(session.glob("explain-*.tsv"))
+    if not files:
+        return []
+    lines = ["## Kế hoạch thực thi (EXPLAIN ANALYZE, BUFFERS)", "",
+             "Mỗi câu chạy 3 lần, giữ lần cuối (cache đã ấm). Kế hoạch đầy đủ trong `explain-<cấu hình>.txt`.", "",
+             "| Cấu hình | Câu truy vấn | Thời gian (ms) | Khối đọc từ bộ đệm | Khối đọc từ đĩa | Dòng trả về | Nút gốc / quét đầu tiên |",
+             "|---|---|---|---|---|---|---|"]
+    for f in files:
+        cfg = f.stem.removeprefix("explain-")
+        with f.open(encoding="utf-8") as fh:
+            for row in csv.DictReader(fh, delimiter="\t"):
+                lines.append(f"| {cfg} | {row['query']} | {row['execution_ms']} | {row['shared_hit']} | "
+                             f"{row['shared_read']} | {row['rows']} | {row['top_node']} |")
+    lines.append("")
+    return lines
+
+
 def write_summary_csv(session: Path, metrics: list[dict]) -> Path:
     fields = ["run", "config", "git_sha", "workload", "mode", "level", "rep", "status", "profiled", "count", "rps",
-              "capacity", "p50", "p95", "p99", "avg", "err", "r304", "r409", "r4xx", "r5xx", "rnone", "conflicts",
-              "fallbacks", "dropped", "cpu_app", "cpu_db", "cpu_loadgen", "loadgen_max", "steal", "sut_busy",
+              "capacity", "p50", "p95", "p99", "avg", "err", "r304", "share_304", "r409", "r4xx", "r5xx", "rnone", "conflicts",
+              "fallbacks", "dropped", "cpu_app", "cpu_db", "cpu_cache", "cpu_loadgen", "loadgen_max", "steal", "sut_busy",
               "srv_mean", "srv_p95", "hikari_active", "hikari_pending_max", "tomcat_busy", "tomcat_busy_max",
               "gc_ms_per_s", "heap_max_mb", "hit_l1", "hit_l2", "sql_per_req", "commits_per_req", "blocks_per_req", "toast_per_req",
               "db_ms_per_req", "checkpoints"]

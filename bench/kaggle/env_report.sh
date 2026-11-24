@@ -25,7 +25,7 @@ for cpu in $(allowed_cpus); do
   echo "cpu$cpu thread_siblings: $(cat "/sys/devices/system/cpu/cpu$cpu/topology/thread_siblings_list" 2>/dev/null)"
 done
 section "Bố trí CPU của phép đo"
-echo "hệ thống được đo (app, PostgreSQL): $SUT_CPUS"
+echo "hệ thống được đo (app, PostgreSQL, Redis): $SUT_CPUS"
 echo "tạo tải và thu số liệu (k6, bench/collect): $LOADGEN_CPUS"
 section "Bộ nhớ, đĩa"
 free -h
@@ -36,11 +36,16 @@ section "Phần mềm"
 "$ASPROF" --version 2>&1 | head -n 1
 "$PYTHON" --version
 pg_admin -d postgres -At -c "SELECT version()"
+redis-server --version 2>/dev/null || echo "redis-server: chưa cài"
 section "Cấu hình PostgreSQL"
 pg_admin -d postgres -At -F ' = ' -c "SELECT name, setting || COALESCE(unit, '') FROM pg_settings WHERE name IN
   ('shared_buffers', 'effective_cache_size', 'work_mem', 'max_connections', 'max_wal_size', 'checkpoint_timeout',
    'jit', 'synchronous_commit', 'shared_preload_libraries', 'track_io_timing', 'max_parallel_workers_per_gather',
    'random_page_cost') ORDER BY name"
+section "Cấu hình Redis"
+redis_cli CONFIG GET maxmemory 2>/dev/null | paste - - | sed 's/	/ = /'
+redis_cli CONFIG GET maxmemory-policy 2>/dev/null | paste - - | sed 's/	/ = /'
+redis_cli CONFIG GET save 2>/dev/null | paste - - | sed 's/	/ = /'
 section "Ứng dụng"
 echo "JVM_OPTS: $JVM_OPTS -XX:ActiveProcessorCount=$SUT_NCPU"
 echo "cổng API $APP_PORT, cổng quản trị $MGMT_PORT"

@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Trạng thái | Bộ đo và các phép đo không phụ thuộc phần cứng: xong. Số liệu C0 trên Kaggle: **chưa chạy** (mục 6) |
+| Trạng thái | Xong. Số liệu C0 đo trên Kaggle ngày 24/11/2026, phiên [`20261124-061459-m0`](../../bench/results/20261124-061459-m0/report.md) (mục 6) |
 | Mã được đánh giá | C0 = mã pha 1 cộng phần đo (Actuator, Micrometer), không đổi hành vi nghiệp vụ |
 | Phương pháp | [ADR-0001](../adr/0001-phuong-phap-do.md); cách chạy lại: [bench/README.md](../../bench/README.md) |
 | Kế hoạch | [ke-hoach-pha-2.md](../ke-hoach-pha-2.md), mốc M0 |
@@ -11,8 +11,9 @@
 
 - Bộ đo trong `bench/` đã chạy trọn quy trình từ máy trắng (container Ubuntu 24.04 và 22.04, giống Kaggle: root, không có systemd): cài đặt, sinh và nạp 50.000 sơ đồ, đo W1, W2, W3 ở cả ba mô hình tải, thu số liệu phía server, flame graph, tổng hợp báo cáo.
 - Số câu SQL, transaction và số lần chở cột `data` của từng endpoint được đo chính xác bằng test `SqlPerRequestE2eTest` (mục 3). Kết quả **xác nhận đúng toàn bộ bảng giả thuyết ở mục 2.3 của kế hoạch** và thêm năm phát hiện.
-- Chạy thử W2 trên dữ liệu đầy đủ (máy dev, chỉ để chẩn đoán) cho thấy hệ thống bão hòa vì **CPU của PostgreSQL** (khoảng 2 trên 3 nhân), và **câu đếm sơ đồ công khai chiếm 49% thời gian CSDL** dù chỉ 5% request gọi tới (mục 5).
-- Đề xuất giữ B1 là việc đầu tiên, với thứ tự các mục con theo mức lợi ích đo được (mục 7). Việc còn lại của M0: chạy `m0` trên Kaggle để có số liệu C0 chính thức.
+- Trên Kaggle (mục 6), W2 giữ được SLO tới **300 req/s** rồi bão hòa ở khoảng **400 req/s**: 3 CPU của hệ thống được đo bận hết, **PostgreSQL dùng nhiều CPU hơn app** (1,73 so với 1,25 nhân), và **câu đếm sơ đồ công khai chiếm 46% thời gian CSDL** dù chỉ 5% request gọi tới, đúng như chẩn đoán trên máy dev (mục 5). W3 (sơ đồ 0,5-1,5 MB) chỉ giữ SLO tới 10-30 req/s; đọc sơ đồ theo id chiếm 57% thời gian CSDL (92 ms mỗi lần).
+- Flame graph cho thêm hai phát hiện: ở W3, **83% CPU của app là Jackson chép cột `data` vào response** từng ký tự; ở W2, gần **8% CPU là chi phí của chính phần đo** (Spring Security quan sát từng filter). Phát hiện thứ nhất được đưa vào B1, phát hiện thứ hai được tắt cho mọi cấu hình trong bộ đo.
+- Thứ tự ưu tiên ở mục 7 được số liệu Kaggle xác nhận: B1 trước (danh sách công khai, không chở `data` khi không cần, ghi response nhanh), rồi B2 (đường đọc theo id và sơ đồ lớn).
 
 ## 2. Bộ đo
 
@@ -107,37 +108,55 @@ Commit là số transaction tường minh; Kết nối là số lần mượn k�
 
 Bảng `diagrams` bị quét tuần tự 14.889 lần, đọc tổng cộng 374 triệu dòng trong khoảng 3 phút chạy. Tỉ lệ trên phụ thuộc vào tỉ lệ thao tác của W2 (danh sách công khai 5%) và quy mô dữ liệu, nên phải xác nhận lại trên Kaggle.
 
-## 6. Kết quả C0 trên Kaggle (chưa chạy)
+## 6. Kết quả C0 trên Kaggle
 
-Cách chạy: [bench/README.md](../../bench/README.md) mục 1, với `REF` là commit M0 (đề xuất gắn tag `v2.0-m0`), ma trận `m0`, khoảng 3 giờ. Sau khi chạy, chép thư mục phiên vào `bench/results/` và điền bảng dưới đây từ `report.md` của phiên (trung vị, min–max qua 3 lần lặp).
+Phiên [`20261124-061459-m0`](../../bench/results/20261124-061459-m0/report.md): Kaggle Notebook CPU, **AMD EPYC 7B12**, 4 vCPU (2 nhân × 2 luồng), 31 GB RAM, Ubuntu 24.04; mã `v2.0-m0`; dữ liệu scale 1 (50.000 sơ đồ). Mỗi phép đo lặp 3 lần, ghi trung vị (min–max); ba lần lặp của mọi phép đo dưới ngưỡng tải đều rất sát nhau.
 
 | Kịch bản | Chỉ số | C0 |
 |---|---|---|
-| W2 | Sức chứa đạt SLO (p95 ≤ 100 ms, lỗi < 1%) | chờ đo |
-| W2 | p95 ở 200 / 500 / 800 req/s | chờ đo |
-| W2 | CPU app / PostgreSQL / k6 ở 500 req/s | chờ đo |
-| W3 | Sức chứa đạt SLO | chờ đo |
-| W3 | p95 ở 20 / 50 req/s | chờ đo |
-| W1 | Throughput và p95 ở 10 / 50 / 100 VU | chờ đo |
-| Tất cả | Số lần chạy không hợp lệ (mục "Kiểm tra tính hợp lệ" của báo cáo) | chờ đo |
+| W2 | Sức chứa đạt SLO (p95 ≤ 100 ms, lỗi < 1%) | **300 req/s** (300–400) |
+| W2 | p95 ở 200 req/s | 31,6 ms (31,5–33,3) |
+| W2 | 500 / 800 req/s | vượt sức chứa: chỉ đạt ~400 req/s, p95 ~3,7 giây |
+| W2 | CPU app / PostgreSQL / k6 ở 200 req/s | 0,40 / 0,74 / 0,14 nhân |
+| W2 | CPU app / PostgreSQL / k6 khi bão hòa (500 req/s) | 1,25 / 1,73 / 0,34 nhân |
+| W3 | Sức chứa đạt SLO | **10 req/s** (10–30) |
+| W3 | p95 ở 20 / 50 req/s | 90,9 ms / 141,9 ms (một lần lặp ở 50 req/s bị nghẽn) |
+| W1 | Throughput và p95 ở 10 VU | 1.503 req/s, 10,8 ms |
+| W1 | Throughput và p95 ở 50 / 100 VU | 1.286 req/s, 93,8 ms / 1.253 req/s, 208,2 ms |
+| Tầng CSDL | SQL mỗi request: W1 / W2 / W3 | 3,33 / 2,15 / 2,13 (W1 khớp test đặc tả: 20 câu / 6 request) |
 
-Phần "vì sao" lấy từ cùng báo cáo: CPU theo tiến trình, SQL/request và khối TOAST/request ở tầng CSDL, câu SQL tốn thời gian nhất, flame graph của W2 và W3.
+**Vì sao:**
+
+- **W2 bị giới hạn bởi PostgreSQL.** Ngay ở 200 req/s, PostgreSQL đã dùng gần gấp đôi CPU của app. Khi bão hòa, cả 200 luồng Tomcat bận và tới 191 request xếp hàng chờ 10 kết nối của pool: thời gian chờ nằm ở CSDL chứ không ở JVM. Theo `pg_stat_statements` (lần chạy 500 req/s): đếm sơ đồ công khai 46% thời gian CSDL (64 ms mỗi lần, quét tuần tự 50.000 dòng, 2 lần mỗi request), trang sơ đồ của tôi 16%, tìm theo tên 15%, trang công khai có `offset` 9%, đọc theo id 7%. Các con số này trùng với chẩn đoán trên máy dev ở mục 5.
+- **W3 bị giới hạn bởi việc đọc và trả sơ đồ lớn.** Đọc một sơ đồ theo id chiếm 57% thời gian CSDL (92 ms mỗi lần: giải nén TOAST, chuyển `jsonb` sang text). Ở phía app, flame graph cho thấy **83% CPU nằm ở `UTF8JsonGenerator._writeRawSegment`**: `@JsonRawValue` buộc Jackson chép chuỗi `data` (~1 MB) vào response từng ký tự, sau khi đã dãn nó ra `char[]`.
+- **W1 bị giới hạn bởi JVM** (app 1,9 nhân, PostgreSQL 0,85 nhân): chuỗi tạo, sửa, lưu, khôi phục, tạo link với dữ liệu nhỏ. Flame graph W2 cũng cho thấy chi phí chung của app: Hibernate 16%, JDBC 11%, Jackson 8,5%, JIT 18%.
+- **Chi phí của chính phần đo:** gần 8% CPU của app ở W2 nằm trong Micrometer, do Spring Security quan sát từng filter và mỗi lần cập nhật một `LongTaskTimer` (danh sách O(n) theo số request đang chạy). Từ các lần đo sau, bộ đo tắt hai loại quan sát này cho mọi cấu hình (kể cả C0), giữ nguyên số liệu `http.server.requests`; ứng dụng cũng tắt chúng trong `application.yml` từ B1.
+- **So với pha 1:** cùng chuỗi request ở 10 người dùng, Locust của pha 1 chỉ đẩy được 330 req/s còn k6 đẩy được 1.503 req/s. Điều này khẳng định nhận định ở mục 2.2 của kế hoạch: số liệu pha 1 bị giới hạn bởi Locust (máy, dữ liệu và bố trí CPU cũng khác, nên không so trực tiếp từng con số).
+
+Kiểm tra tính hợp lệ: các lần W2 ở 500 và 800 req/s được đánh dấu "vượt sức chứa". Đó là kết quả (điểm bão hòa) chứ không phải lỗi bộ đo, nhưng độ trễ của chúng chỉ để tham khảo. Ở W3, bộ đo của phiên này có hai khiếm khuyết đã được sửa cho các phiên sau:
+
+- 227 sơ đồ lớn có lịch sử được chia cho 300 phân vùng, nên một số VU không có gì để khôi phục và phải đổi sang đọc (47-177 thao tác mỗi lần, dưới 2%). Giờ sơ đồ có lịch sử được chia đều trước, và W3 dùng tối đa 200 VU.
+- Ở lần W3 50 req/s bị nghẽn, request timeout làm VU nhớ sai version rồi nhận 409. Giờ sau một lần ghi không rõ kết quả, VU đọc lại version trước khi ghi tiếp.
+
+Lưu ý: lần `quick` trước đó chạy trên Intel Xeon 2,2 GHz, còn phiên này chạy trên AMD EPYC 7B12. Máy Kaggle đổi giữa các phiên, vì vậy mọi phép so sánh C0 với bản cải tiến phải chạy xen kẽ trong cùng một phiên (ADR-0001).
 
 ## 7. Nút thắt và thứ tự ưu tiên đề xuất
 
-Từ mục 3-5, giữ B1 là việc đầu tiên. Thứ tự các mục con theo lợi ích đã thấy (cần Kaggle xác nhận):
+Từ mục 3-6, giữ B1 là việc đầu tiên. Thứ tự các mục con theo lợi ích đo được (đã được số liệu Kaggle xác nhận):
 
 1. **Danh sách công khai:** index một phần `WHERE is_public` kèm `ORDER BY`, đếm tổng một lần (controller đang gọi service hai lần). Mục này nhắm vào câu chiếm khoảng một nửa thời gian CSDL của W2.
 2. **Không chở `data` khi không cần:** truy vấn danh sách và lịch sử chỉ lấy cột tóm tắt; kiểm tra quyền bằng `findAccessInfo` (4 cột) cho sửa, xóa, link, phiên bản. Chở `data` chiếm phần lớn chi phí của các câu này (mục 4).
 3. **Ghi gọn:** UPDATE có điều kiện cho PUT, chép phiên bản ngay trong CSDL cho lưu và khôi phục, `Persistable` để bỏ SELECT của `merge`.
 4. **Index còn thiếu:** `diagram_shares(diagram_id)`, `diagrams(owner_id, updated_at)`, `pg_trgm` cho tìm theo tên (mục 2.3 của kế hoạch).
-5. **Transaction cho truy vấn đọc nhiều câu** (phát hiện 1 ở mục 3): một transaction chỉ đọc cho cặp lấy trang và đếm, để dùng một kết nối và nhất quán.
+5. **Lấy trang và đếm trong một câu lệnh** (phát hiện 1 ở mục 3): một kết nối, cùng một snapshot, thay cho 4 câu chạy autocommit trên 4 kết nối.
+6. **Ghi `data` vào response bằng byte** (mục 6): bỏ đường chép từng ký tự của `@JsonRawValue`, nhắm vào 83% CPU của app ở W3.
 
 Sau B1, đường đọc theo id (câu gọi nhiều nhất) và tra token chia sẻ vẫn chạm CSDL ở mọi request: đó là phần của B2 và B3. Các bài toán còn lại giữ thứ tự của kế hoạch.
 
 ## 8. Giới hạn
 
-- Chưa có số liệu C0 trên Kaggle; mọi số đo thời gian trong tài liệu này là của máy dev và chỉ để chẩn đoán.
+- Số đo thời gian ở mục 4 và 5 là của máy dev, chỉ để chẩn đoán; số liệu chính thức là mục 6.
 - W1 dựng lại theo README vì kịch bản Locust gốc không có trong repo; không so sánh chéo k6 với Locust.
-- Hệ thống được đo có 3 vCPU; trên Kaggle (2 nhân × 2 luồng) k6 vẫn chia một nhân vật lý với hệ thống được đo.
+- Hệ thống được đo có 3 vCPU; trên Kaggle (2 nhân × 2 luồng) k6 vẫn chia một nhân vật lý với hệ thống được đo. k6 dùng tối đa 0,5 nhân, dưới ngưỡng 0,8 của kiểm tra hợp lệ.
+- Kết nối JDBC trên Kaggle được mã hóa TLS (gói PostgreSQL của Ubuntu bật `ssl` mặc định, JDBC mặc định `sslmode=prefer`); chi phí mã hóa dưới 2% CPU của app và giống nhau ở mọi cấu hình.
 - `docs/openapi.yaml` trong repo đã lệch so với mã từ trước M0 (`DiagramVersionResponse` thiếu `id` và có trường `diagramType` lạc chỗ; `ChangePasswordRequest` có `maxLength` không có trong DTO). Đã sinh lại; đặc tả sinh từ mã trước và sau M0 giống hệt nhau, nên M0 không đổi hợp đồng API.

@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Trạng thái | Đề xuất, chờ nhóm duyệt |
-| Tiến độ | M0: bộ đo và các phép đo không phụ thuộc phần cứng đã xong ([danh-gia-hien-trang.md](pha-2/danh-gia-hien-trang.md), [ADR-0001](adr/0001-phuong-phap-do.md), [bench/](../bench/README.md)); còn chạy ma trận `m0` trên Kaggle |
+| Tiến độ | M0 xong: bộ đo, số liệu C0 trên Kaggle ([danh-gia-hien-trang.md](pha-2/danh-gia-hien-trang.md), [ADR-0001](adr/0001-phuong-phap-do.md), [bench/](../bench/README.md)) |
 | Mốc so sánh (baseline) | `main` tại commit `35503aa`, gắn tag `v1.0-phase1` trước khi bắt đầu. C0 của mọi phép so sánh là mã này cộng phần đo của M0 (Actuator, Micrometer; không đổi hành vi), gắn tag `v2.0-m0` |
 | Phần cứng đánh giá duy nhất | Kaggle Notebook CPU (4 vCPU, ~30 GB RAM); ghi lại `lscpu` ở mỗi phiên |
 | Tài liệu liên quan | [README.md](../README.md), [AGENTS.md](../AGENTS.md), [luong-nghiep-vu.md](luong-nghiep-vu.md), [openapi.yaml](openapi.yaml) |
@@ -609,13 +609,13 @@ Báo cáo kết quả trình bày mọi bài toán theo cùng một khung: kịc
 ## 9. Checklist
 
 **M0 – Phép đo**
-- [ ] Gắn tag `v1.0-phase1` (commit `35503aa`) và `v2.0-m0` (commit M0, mốc C0)
-- [x] `bench/kaggle/setup.sh` chạy được từ một máy trắng (đã thử trên container Ubuntu 22.04 và 24.04; còn chạy thật trên Kaggle)
+- [x] Gắn tag `v1.0-phase1` (commit `35503aa`) và `v2.0-m0` (commit `15f2356`, mốc C0)
+- [x] `bench/kaggle/setup.sh` chạy được từ một máy trắng (container Ubuntu 22.04, 24.04 và Kaggle)
 - [x] Seed dữ liệu, template DB, reset trước mỗi lần chạy
 - [x] k6 W1–W3 (Locust W1 không làm, lý do ở mục 3.4)
 - [x] Actuator + endpoint Prometheus + script cào số liệu; CPU theo tiến trình (`procstat.py` thay `pidstat`); `pg_stat_statements`
 - [x] Bảng SQL mỗi request (`SqlPerRequestE2eTest`); công cụ flame graph
-- [ ] Đo lại C0 trên Kaggle (ma trận `m0`, khoảng 3 giờ) và điền mục 6 của `danh-gia-hien-trang.md`
+- [x] Đo lại C0 trên Kaggle (phiên `20261124-061459-m0`), điền mục 6 của `danh-gia-hien-trang.md`
 - [x] `danh-gia-hien-trang.md` phần không phụ thuộc phần cứng; thứ tự ưu tiên đề xuất (B1 trước, thứ tự mục con theo số đo)
 
 **Must**

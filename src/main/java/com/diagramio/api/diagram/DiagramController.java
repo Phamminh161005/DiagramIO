@@ -11,6 +11,7 @@ import com.diagramio.config.OpenApiConfig;
 import com.diagramio.domain.access.Caller;
 import com.diagramio.domain.diagram.Diagram;
 import com.diagramio.domain.diagram.DiagramData;
+import com.diagramio.domain.diagram.DiagramPage;
 import com.diagramio.domain.diagram.DiagramService;
 import com.diagramio.domain.diagram.DiagramType;
 import io.swagger.v3.oas.annotations.Operation;
@@ -54,7 +55,9 @@ public class DiagramController {
 
     @GetMapping
     @Operation(summary = "Danh sách sơ đồ của tôi",
-            description = "Lọc theo loại (UML/ERD), tìm theo tên, phân trang (size tối đa 100).")
+            description = "Lọc theo loại (UML/ERD), tìm theo tên, phân trang (size tối đa 100). "
+                    + "Sắp xếp: mới sửa trước (updatedAt giảm dần), cùng thời điểm thì theo id, nên thứ tự giữa "
+                    + "các trang ổn định.")
     @SecurityRequirement(name = OpenApiConfig.BEARER_AUTH)
     @ApiResponse(responseCode = "200", description = "Một trang danh sách sơ đồ (không kèm data)")
     public PageResponse<DiagramSummaryResponse> getMyDiagrams(
@@ -64,9 +67,7 @@ public class DiagramController {
             @RequestParam(defaultValue = "20") int size,
             @CurrentUser UUID ownerId) {
         DiagramType typeFilter = diagramType == null || diagramType.isBlank() ? null : DiagramType.from(diagramType);
-        List<Diagram> diagrams = diagramService.getDiagramsByOwner(ownerId, typeFilter, title, page, size);
-        long total = diagramService.countDiagramsByOwner(ownerId, typeFilter, title);
-        return pageResponse(diagrams, page, size, total);
+        return pageResponse(diagramService.listMine(ownerId, typeFilter, title, page, size), page, size);
     }
 
     @PostMapping
@@ -90,14 +91,14 @@ public class DiagramController {
     }
 
     @GetMapping("/public")
-    @Operation(summary = "Danh sách sơ đồ công khai", description = "Không cần đăng nhập.")
+    @Operation(summary = "Danh sách sơ đồ công khai",
+            description = "Không cần đăng nhập. Sắp xếp: mới sửa trước (updatedAt giảm dần), rồi theo id.")
     @SecurityRequirements
     @ApiResponse(responseCode = "200", description = "Một trang danh sách sơ đồ công khai (không kèm data)")
     public PageResponse<DiagramSummaryResponse> getPublicDiagrams(
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
-        List<Diagram> diagrams = diagramService.getPublicDiagrams(page, size);
-        return pageResponse(diagrams, page, size, diagramService.countPublicDiagrams());
+        return pageResponse(diagramService.listPublic(page, size), page, size);
     }
 
     @GetMapping("/{id}")
@@ -129,7 +130,7 @@ public class DiagramController {
             Caller caller) {
         return DiagramResponse.from(diagramService.updateDiagram(
                 id, request.title(), DiagramType.from(request.diagramType()),
-                DiagramData.of(request.data().toString()),
+                DiagramData.of(request.data()),
                 request.isPublic(),
                 caller, request.version()));
     }
@@ -147,11 +148,11 @@ public class DiagramController {
         return ResponseEntity.noContent().build();
     }
 
-    private PageResponse<DiagramSummaryResponse> pageResponse(
-            List<Diagram> diagrams, int page, int size, long total) {
-        List<DiagramSummaryResponse> content = diagrams.stream()
+    private PageResponse<DiagramSummaryResponse> pageResponse(DiagramPage result, int page, int size) {
+        List<DiagramSummaryResponse> content = result.items().stream()
                 .map(DiagramSummaryResponse::from)
                 .toList();
+        long total = result.total();
         int totalPages = total == 0 ? 0 : (int) Math.ceil((double) total / size);
         return new PageResponse<>(content, page, size, total, totalPages);
     }

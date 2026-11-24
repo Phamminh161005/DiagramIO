@@ -14,5 +14,9 @@ public interface UserRepository {
 
     boolean existsByUsername(String username);
 
+    /** Thêm người dùng mới bằng một câu INSERT. */
+    User insert(User user);
+
+    /** Ghi đè người dùng đã có (đổi mật khẩu). */
     User save(User user);
 }

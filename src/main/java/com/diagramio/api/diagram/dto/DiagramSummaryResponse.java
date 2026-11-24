@@ -1,6 +1,6 @@
 package com.diagramio.api.diagram.dto;
 
-import com.diagramio.domain.diagram.Diagram;
+import com.diagramio.domain.diagram.DiagramSummary;
 import java.time.Instant;
 import java.util.UUID;
 
@@ -15,9 +15,9 @@ public record DiagramSummaryResponse(
         Instant createdAt,
         Instant updatedAt) {
 
-    public static DiagramSummaryResponse from(Diagram diagram) {
-        return new DiagramSummaryResponse(diagram.getId(), diagram.getTitle(), diagram.getDiagramType().name(),
-                diagram.getVersion(), diagram.isPublic(), diagram.getOwnerId(), diagram.getUpdatedBy(),
-                diagram.getCreatedAt(), diagram.getUpdatedAt());
+    public static DiagramSummaryResponse from(DiagramSummary diagram) {
+        return new DiagramSummaryResponse(diagram.id(), diagram.title(), diagram.diagramType().name(),
+                diagram.version(), diagram.isPublic(), diagram.ownerId(), diagram.updatedBy(),
+                diagram.createdAt(), diagram.updatedAt());
     }
 }

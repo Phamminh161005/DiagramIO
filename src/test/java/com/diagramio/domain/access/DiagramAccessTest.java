@@ -2,10 +2,14 @@ package com.diagramio.domain.access;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.diagramio.domain.diagram.Diagram;
+import com.diagramio.domain.diagram.DiagramAccessInfo;
 import com.diagramio.domain.diagram.DiagramData;
 import com.diagramio.domain.diagram.DiagramRepository;
 import com.diagramio.domain.diagram.DiagramType;
@@ -24,7 +28,7 @@ class DiagramAccessTest {
 
     private final UUID ownerId = UUID.randomUUID();
     private final UUID diagramId = UUID.randomUUID();
-    private Diagram diagram;
+    private DiagramAccessInfo diagram;
 
     private Caller owner;
     private Caller editLink;
@@ -35,9 +39,7 @@ class DiagramAccessTest {
 
     @BeforeEach
     void setUp() {
-        diagram = new Diagram(diagramId, "ERD", DiagramType.ERD, DiagramData.fromStorage("{\"nodes\": [], \"edges\": []}"), 1, false, ownerId,
-                null, null, null);
-        when(repository.findById(diagramId)).thenReturn(Optional.of(diagram));
+        stub(false);
         owner = Caller.user(ownerId);
         editLink = Caller.shareToken(diagramId, ShareRole.EDIT);
         viewLink = Caller.shareToken(diagramId, ShareRole.VIEW);
@@ -49,7 +51,7 @@ class DiagramAccessTest {
     @Test
     void ownerHasEveryPermission() {
         for (Permission permission : Permission.values()) {
-            assertThat(access.require(diagramId, owner, permission)).isSameAs(diagram);
+            assertThat(access.require(diagramId, owner, permission)).isEqualTo(diagram);
         }
     }
 
@@ -82,7 +84,7 @@ class DiagramAccessTest {
 
     @Test
     void publicDiagramOpensContentButNotHistory() {
-        diagram.setPublic(true);
+        stub(true);
 
         assertGranted(anonymous, Permission.VIEW);
         assertGranted(stranger, Permission.VIEW);
@@ -98,6 +100,8 @@ class DiagramAccessTest {
     @Test
     void missingDiagramIs404ForEveryone() {
         UUID missing = UUID.randomUUID();
+        when(repository.findAccessInfo(missing)).thenReturn(Optional.empty());
+        when(repository.lockAccessInfo(missing)).thenReturn(Optional.empty());
         when(repository.findById(missing)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> access.require(missing, owner, Permission.VIEW))
@@ -106,6 +110,44 @@ class DiagramAccessTest {
                 .isInstanceOf(DiagramNotFoundException.class);
         assertThatThrownBy(() -> access.require(null, owner, Permission.VIEW))
                 .isInstanceOf(DiagramNotFoundException.class);
+        assertThatThrownBy(() -> access.requireLocked(missing, owner, Permission.EDIT))
+                .isInstanceOf(DiagramNotFoundException.class);
+        assertThatThrownBy(() -> access.requireDiagram(missing, owner, Permission.VIEW))
+                .isInstanceOf(DiagramNotFoundException.class);
+        assertThatThrownBy(() -> access.requireDiagram(null, owner, Permission.VIEW))
+                .isInstanceOf(DiagramNotFoundException.class);
+    }
+
+    @Test
+    void requireReadsOnlyAccessInfoNotTheDiagramData() {
+        assertThat(access.require(diagramId, owner, Permission.EDIT)).isEqualTo(diagram);
+
+        verify(repository, never()).findById(any());
+        verify(repository, never()).lockAccessInfo(any());
+    }
+
+    @Test
+    void requireLockedLocksTheRowAndAppliesTheSameRules() {
+        assertThat(access.requireLocked(diagramId, editLink, Permission.EDIT)).isEqualTo(diagram);
+        assertThatThrownBy(() -> access.requireLocked(diagramId, viewLink, Permission.EDIT))
+                .isInstanceOf(ForbiddenException.class);
+        assertThatThrownBy(() -> access.requireLocked(diagramId, anonymous, Permission.EDIT))
+                .isInstanceOf(UnauthorizedException.class);
+
+        verify(repository, never()).findAccessInfo(any());
+    }
+
+    @Test
+    void requireDiagramReturnsTheFullDiagramWhenAllowed() {
+        Diagram full = new Diagram(diagramId, "ERD", DiagramType.ERD, DiagramData.EMPTY, 1, false, ownerId,
+                null, null, null);
+        when(repository.findById(diagramId)).thenReturn(Optional.of(full));
+
+        assertThat(access.requireDiagram(diagramId, viewLink, Permission.VIEW)).isSameAs(full);
+        assertThatThrownBy(() -> access.requireDiagram(diagramId, stranger, Permission.VIEW))
+                .isInstanceOf(ForbiddenException.class);
+        assertThatThrownBy(() -> access.requireDiagram(diagramId, anonymous, Permission.VIEW))
+                .isInstanceOf(UnauthorizedException.class);
     }
 
     @Test
@@ -114,9 +156,15 @@ class DiagramAccessTest {
                 .hasMessage(Permission.EDIT.deniedMessage());
     }
 
+    private void stub(boolean isPublic) {
+        diagram = new DiagramAccessInfo(diagramId, ownerId, isPublic, 1);
+        when(repository.findAccessInfo(diagramId)).thenReturn(Optional.of(diagram));
+        when(repository.lockAccessInfo(diagramId)).thenReturn(Optional.of(diagram));
+    }
+
     private void assertGranted(Caller caller, Permission... permissions) {
         for (Permission permission : permissions) {
-            assertThat(access.require(diagramId, caller, permission)).as(permission.name()).isSameAs(diagram);
+            assertThat(access.require(diagramId, caller, permission)).as(permission.name()).isEqualTo(diagram);
         }
     }
 

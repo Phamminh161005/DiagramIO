@@ -71,8 +71,10 @@ class SqlPerRequestE2eTest extends E2eTestBase {
      * UPDATE, DELETE; số commit (transaction tường minh); số lần mượn kết nối từ pool; số lần chở cột data
      * (null = không kiểm tra, khi kết quả phụ thuộc dữ liệu của test khác).
      *
-     * <p>Query method tự sinh của Spring Data (findByX, existsByX) không có @Transactional nên chạy autocommit:
-     * mỗi câu mượn một kết nối riêng và không có commit, vì vậy số commit có thể nhỏ hơn số lần mượn kết nối.
+     * <p>Query method tự sinh của Spring Data (findByX, existsByX) và các câu SQL viết tay của adapter (JDBC) không
+     * mở transaction nên chạy autocommit: mỗi câu mượn một kết nối riêng và không có commit, vì vậy số commit có thể
+     * nhỏ hơn số lần mượn kết nối. Commit chỉ còn ở những chỗ cần transaction theo AGENTS.md (lưu và khôi phục phiên
+     * bản, refresh token, đăng ký và các thao tác ghi của JPA).
      */
     private record Expect(int status, int selects, int inserts, int updates, int deletes, int commits,
                           int connections, Integer dataTrips) {
@@ -97,14 +99,14 @@ class SqlPerRequestE2eTest extends E2eTestBase {
 
         String name = "u" + uniq();
         String email = name + "@sql.test";
-        measure("POST /auth/register", "khách", "", expect(201, 3, 1, 0, 0, 1, 3, 0),
+        measure("POST /auth/register", "khách", "", expect(201, 2, 1, 0, 0, 1, 3, 0),
                 post(API + "/auth/register").json(obj("username", name, "email", email, "password", PASSWORD)));
-        Res login = measure("POST /auth/login", "khách", "", expect(200, 2, 1, 0, 0, 1, 2, 0),
+        Res login = measure("POST /auth/login", "khách", "", expect(200, 1, 1, 0, 0, 1, 2, 0),
                 post(API + "/auth/login").json(obj("email", email, "password", PASSWORD)));
         String accessToken = login.json().path("accessToken").asText();
-        Res refreshed = measure("POST /auth/refresh-token", "khách", "", expect(200, 3, 1, 1, 0, 1, 1, 0),
+        Res refreshed = measure("POST /auth/refresh-token", "khách", "", expect(200, 2, 1, 1, 0, 1, 1, 0),
                 post(API + "/auth/refresh-token").json(obj("refreshToken", login.json().path("refreshToken").asText())));
-        measure("POST /auth/logout", "chủ tài khoản", "", expect(204, 2, 0, 1, 0, 1, 2, 0),
+        measure("POST /auth/logout", "chủ tài khoản", "", expect(204, 1, 0, 1, 0, 1, 2, 0),
                 post(API + "/auth/logout").bearer(accessToken)
                         .json(obj("refreshToken", refreshed.json().path("refreshToken").asText())));
         measure("GET /users/me", "chủ tài khoản", "", expect(200, 1, 0, 0, 0, 1, 1, 0),
@@ -114,7 +116,7 @@ class SqlPerRequestE2eTest extends E2eTestBase {
                         .json(obj("currentPassword", PASSWORD, "newPassword", PASSWORD + "x")));
 
         // ---- Một sơ đồ 50 KB có 10 phiên bản và hai link chia sẻ
-        Res created = measure("POST /diagrams", "chủ sơ đồ", "", expect(201, 0, 1, 0, 0, 1, 1, 0),
+        Res created = measure("POST /diagrams", "chủ sơ đồ", "", expect(201, 0, 1, 0, 0, 0, 1, 0),
                 post(API + "/diagrams").as(owner).json(obj("title", "SQL count", "diagramType", "ERD")));
         String id = created.json().path("id").asText();
         int version = setData(owner, id, data).path("version").asInt();
@@ -124,65 +126,65 @@ class SqlPerRequestE2eTest extends E2eTestBase {
             createVersion(owner, id, "v" + i);
         }
 
-        measure("GET /diagrams/{id}", "chủ sơ đồ", "data 50 KB", expect(200, 1, 0, 0, 0, 1, 1, 1),
+        measure("GET /diagrams/{id}", "chủ sơ đồ", "data 50 KB", expect(200, 1, 0, 0, 0, 0, 1, 1),
                 get(API + "/diagrams/" + id).as(owner));
-        measure("GET /diagrams/{id}", "link view", "X-Share-Token, không đăng nhập", expect(200, 2, 0, 0, 0, 1, 2, 1),
+        measure("GET /diagrams/{id}", "link view", "X-Share-Token, không đăng nhập", expect(200, 2, 0, 0, 0, 0, 2, 1),
                 get(API + "/diagrams/" + id).share(viewToken));
         String publicId = createDiagramId(owner);
         setData(owner, publicId, data);
         setPublic(owner, publicId, true);
-        measure("GET /diagrams/{id}", "khách", "sơ đồ công khai", expect(200, 1, 0, 0, 0, 1, 1, 1),
+        measure("GET /diagrams/{id}", "khách", "sơ đồ công khai", expect(200, 1, 0, 0, 0, 0, 1, 1),
                 get(API + "/diagrams/" + publicId));
 
-        Res put = measure("PUT /diagrams/{id}", "chủ sơ đồ", "data 50 KB", expect(200, 2, 0, 1, 0, 2, 2, 3),
+        Res put = measure("PUT /diagrams/{id}", "chủ sơ đồ", "data 50 KB", expect(200, 1, 0, 1, 0, 0, 2, 1),
                 putRequest(owner, id, version, data));
         version = put.json().path("version").asInt();
         Res putByLink = measure("PUT /diagrams/{id}", "link edit", "X-Share-Token, không đăng nhập",
-                expect(200, 3, 0, 1, 0, 2, 3, 3), putRequest(Actor.shareOnly(editToken), id, version, data));
+                expect(200, 2, 0, 1, 0, 0, 3, 1), putRequest(Actor.shareOnly(editToken), id, version, data));
         version = putByLink.json().path("version").asInt();
-        measure("PUT /diagrams/{id}", "chủ sơ đồ", "version cũ, trả 409", expect(409, 1, 0, 0, 0, 1, 1, 1),
+        measure("PUT /diagrams/{id}", "chủ sơ đồ", "version cũ, trả 409", expect(409, 1, 0, 0, 0, 0, 1, 0),
                 putRequest(owner, id, version - 1, data));
 
         // ---- Lịch sử phiên bản
         Res versions = measure("GET /diagrams/{id}/versions", "chủ sơ đồ", VERSIONS + " phiên bản × 50 KB",
-                expect(200, 2, 0, 0, 0, 1, 2, VERSIONS + 1), get(API + "/diagrams/" + id + "/versions").as(owner));
+                expect(200, 2, 0, 0, 0, 0, 2, 0), get(API + "/diagrams/" + id + "/versions").as(owner));
         String versionId = items(versions.json()).get(VERSIONS - 1).path("id").asText();
-        measure("GET /diagrams/{id}/versions/{vid}", "chủ sơ đồ", "", expect(200, 2, 0, 0, 0, 1, 2, 2),
+        measure("GET /diagrams/{id}/versions/{vid}", "chủ sơ đồ", "", expect(200, 2, 0, 0, 0, 0, 2, 1),
                 get(API + "/diagrams/" + id + "/versions/" + versionId).as(owner));
-        measure("POST /diagrams/{id}/versions", "chủ sơ đồ", "", expect(201, 3, 1, 0, 0, 1, 1, 2),
+        measure("POST /diagrams/{id}/versions", "chủ sơ đồ", "", expect(201, 1, 1, 0, 0, 1, 1, 1),
                 post(API + "/diagrams/" + id + "/versions").as(owner).json(obj("note", "measured")));
-        measure("POST /diagrams/{id}/versions/{vid}/restore", "chủ sơ đồ", "", expect(200, 4, 1, 1, 0, 1, 1, 4),
+        measure("POST /diagrams/{id}/versions/{vid}/restore", "chủ sơ đồ", "", expect(200, 2, 1, 1, 0, 1, 1, 1),
                 post(API + "/diagrams/" + id + "/versions/" + versionId + "/restore").as(owner));
 
         // ---- Chia sẻ
-        measure("GET /diagrams/{id}/shares", "chủ sơ đồ", "", expect(200, 2, 0, 0, 0, 1, 2, 1),
+        measure("GET /diagrams/{id}/shares", "chủ sơ đồ", "", expect(200, 2, 0, 0, 0, 0, 2, 0),
                 get(API + "/diagrams/" + id + "/shares").as(owner));
-        Res share = measure("POST /diagrams/{id}/shares", "chủ sơ đồ", "", expect(201, 3, 1, 0, 0, 2, 3, 1),
+        Res share = measure("POST /diagrams/{id}/shares", "chủ sơ đồ", "", expect(201, 1, 1, 0, 0, 0, 2, 0),
                 post(API + "/diagrams/" + id + "/shares").as(owner).json(obj("role", "view")));
         String shareId = share.json().path("id").asText();
-        measure("PATCH /diagrams/{id}/shares/{sid}", "chủ sơ đồ", "", expect(200, 2, 0, 1, 0, 3, 3, 1),
+        measure("PATCH /diagrams/{id}/shares/{sid}", "chủ sơ đồ", "", expect(200, 1, 0, 1, 0, 0, 2, 0),
                 patch(API + "/diagrams/" + id + "/shares/" + shareId).as(owner).json(obj("role", "edit")));
-        measure("GET /shares/{token}", "khách", "", expect(200, 2, 0, 0, 0, 1, 2, 1),
+        measure("GET /shares/{token}", "khách", "", expect(200, 2, 0, 0, 0, 0, 2, 1),
                 get(API + "/shares/" + share.json().path("shareToken").asText()));
-        measure("DELETE /diagrams/{id}/shares/{sid}", "chủ sơ đồ", "", expect(204, 3, 0, 0, 1, 3, 3, 1),
+        measure("DELETE /diagrams/{id}/shares/{sid}", "chủ sơ đồ", "", expect(204, 1, 0, 0, 1, 0, 2, 0),
                 delete(API + "/diagrams/" + id + "/shares/" + shareId).as(owner));
 
-        // ---- Danh sách: một người có đủ một trang sơ đồ 50 KB (trang đầy thì Spring Data mới đếm tổng)
+        // ---- Danh sách: một người có đủ một trang sơ đồ 50 KB; trang và tổng số nằm trong một câu lệnh
         Actor lister = registerAndLogin();
         for (int i = 0; i < PAGE_SIZE; i++) {
             setData(lister, createDiagram(lister, "ERD", "Order " + i).path("id").asText(), data);
         }
-        measure("GET /diagrams", "chủ sơ đồ", "trang " + PAGE_SIZE + " sơ đồ × 50 KB", expect(200, 4, 0, 0, 0, 0, 4, PAGE_SIZE + 1),
+        measure("GET /diagrams", "chủ sơ đồ", "trang " + PAGE_SIZE + " sơ đồ × 50 KB", expect(200, 1, 0, 0, 0, 0, 1, 0),
                 get(API + "/diagrams?page=0&size=" + PAGE_SIZE).as(lister));
-        measure("GET /diagrams?title=", "chủ sơ đồ", PAGE_SIZE + " sơ đồ khớp tên", expect(200, 4, 0, 0, 0, 0, 4, PAGE_SIZE + 1),
+        measure("GET /diagrams?title=", "chủ sơ đồ", PAGE_SIZE + " sơ đồ khớp tên", expect(200, 1, 0, 0, 0, 0, 1, 0),
                 get(API + "/diagrams?title=order&page=0&size=" + PAGE_SIZE).as(lister));
-        measure("GET /diagrams/public", "khách", "size=1 (CSDL test dùng chung)", expect(200, 4, 0, 0, 0, 0, 4, null),
+        measure("GET /diagrams/public", "khách", "size=1 (CSDL test dùng chung)", expect(200, 1, 0, 0, 0, 0, 1, null),
                 get(API + "/diagrams/public?page=0&size=1"));
 
         // ---- Xóa
         String doomed = createDiagramId(owner);
         setData(owner, doomed, data);
-        measure("DELETE /diagrams/{id}", "chủ sơ đồ", "data 50 KB", expect(204, 2, 0, 0, 1, 2, 2, 2),
+        measure("DELETE /diagrams/{id}", "chủ sơ đồ", "data 50 KB", expect(204, 1, 0, 0, 1, 0, 2, 0),
                 delete(API + "/diagrams/" + doomed).as(owner));
 
         writeReport();

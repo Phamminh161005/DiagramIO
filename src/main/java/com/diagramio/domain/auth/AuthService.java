@@ -56,7 +56,7 @@ public class AuthService {
         }
         User user = new User(UUID.randomUUID(), username, normalizedEmail, passwordHasher.hash(rawPassword),
                 clock.instant());
-        return userRepository.save(user);
+        return userRepository.insert(user);
     }
 
     public AuthTokens login(String email, String rawPassword) {
@@ -70,13 +70,17 @@ public class AuthService {
     /**
      * Đổi refresh token lấy cặp token mới; token cũ bị thu hồi ngay (rotation).
      * Thu hồi token cũ và lưu token mới nằm trong một transaction: lỗi giữa chừng thì không mất cả hai.
+     * Thu hồi là một câu UPDATE có điều kiện "chưa bị thu hồi": hai request đồng thời cùng một token thì chỉ một
+     * request thắng, request kia nhận 401 thay vì cũng được cấp token mới.
      */
     public AuthTokens refresh(String rawRefreshToken) {
         return transactionRunner.inTransaction(() -> {
             RefreshToken current = refreshTokenRepository.findByTokenHash(hash(rawRefreshToken))
                     .filter(t -> t.isUsable(clock.instant()))
                     .orElseThrow(() -> new UnauthorizedException("Invalid or expired refresh token"));
-            refreshTokenRepository.save(current.revoke());
+            if (!refreshTokenRepository.revoke(current.id())) {
+                throw new UnauthorizedException("Invalid or expired refresh token");
+            }
             User user = userRepository.findById(current.userId())
                     .orElseThrow(() -> new UnauthorizedException("Invalid or expired refresh token"));
             return issueTokens(user);
@@ -91,13 +95,13 @@ public class AuthService {
         refreshTokenRepository.findByTokenHash(hash(rawRefreshToken))
                 .filter(t -> t.userId().equals(userId))
                 .filter(t -> !t.revoked())
-                .ifPresent(t -> refreshTokenRepository.save(t.revoke()));
+                .ifPresent(t -> refreshTokenRepository.revoke(t.id()));
     }
 
     private AuthTokens issueTokens(User user) {
         String rawRefreshToken = generateRefreshToken();
         Instant expiresAt = clock.instant().plus(refreshTokenTtl);
-        refreshTokenRepository.save(
+        refreshTokenRepository.insert(
                 new RefreshToken(UUID.randomUUID(), user.id(), hash(rawRefreshToken), expiresAt, false));
         return new AuthTokens(tokenIssuer.issueAccessToken(user), rawRefreshToken);
     }

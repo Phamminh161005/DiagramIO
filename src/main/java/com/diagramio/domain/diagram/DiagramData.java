@@ -44,10 +44,27 @@ public final class DiagramData {
         } catch (JsonProcessingException e) {
             throw new InvalidInputException("data must be valid JSON");
         }
+        requireShape(root);
+        return new DiagramData(json);
+    }
+
+    /**
+     * Dữ liệu từ người dùng đã được Jackson parse sẵn (body của request): kiểm tra cấu trúc trên cây đã có rồi
+     * serialize một lần, thay vì serialize ra chuỗi rồi parse lại như {@link #of(String)}.
+     */
+    public static DiagramData of(JsonNode root) {
+        requireShape(root);
+        String json = root.toString();
+        if (json.length() > MAX_BYTES || json.getBytes(StandardCharsets.UTF_8).length > MAX_BYTES) {
+            throw new InvalidInputException("data must not exceed 2 MB");
+        }
+        return new DiagramData(json);
+    }
+
+    private static void requireShape(JsonNode root) {
         if (root == null || !root.isObject() || !root.path("nodes").isArray() || !root.path("edges").isArray()) {
             throw new InvalidInputException("data must be a JSON object with \"nodes\" and \"edges\" arrays");
         }
-        return new DiagramData(json);
     }
 
     /** Dữ liệu đã lưu trong CSDL (đã được kiểm tra bằng {@link #of} lúc ghi). */

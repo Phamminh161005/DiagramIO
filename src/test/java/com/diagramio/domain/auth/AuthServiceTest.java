@@ -5,7 +5,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -73,10 +72,14 @@ class AuthServiceTest {
         authService = new AuthService(userRepository, refreshTokenRepository, passwordHasher, tokenIssuer,
                 recordingTransaction, Duration.ofDays(7), Clock.fixed(NOW, ZoneOffset.UTC));
 
-        when(userRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        when(refreshTokenRepository.save(any())).thenAnswer(inv -> {
+        when(userRepository.insert(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(refreshTokenRepository.insert(any())).thenAnswer(inv -> {
             refreshTokenSavedInsideTransaction.add(insideTransaction);
             return inv.getArgument(0);
+        });
+        when(refreshTokenRepository.revoke(any())).thenAnswer(inv -> {
+            refreshTokenSavedInsideTransaction.add(insideTransaction);
+            return true;
         });
     }
 
@@ -90,6 +93,8 @@ class AuthServiceTest {
         assertThat(created.email()).isEqualTo("minh@gmail.com");
         assertThat(created.passwordHash()).isEqualTo("hashed:secret123");
         assertThat(created.createdAt()).isEqualTo(NOW);
+        verify(userRepository).insert(created);   // thêm mới bằng một câu INSERT, không qua merge
+        verify(userRepository, never()).save(any());
     }
 
     @Test
@@ -98,7 +103,7 @@ class AuthServiceTest {
 
         assertThatThrownBy(() -> authService.register("other", "uet@gmail.com", "secret123"))
                 .isInstanceOf(ConflictException.class);
-        verify(userRepository, never()).save(any());
+        verify(userRepository, never()).insert(any());
     }
 
     @Test
@@ -119,7 +124,7 @@ class AuthServiceTest {
 
         assertThat(tokens.accessToken()).isEqualTo("access-for-uet");
         ArgumentCaptor<RefreshToken> saved = ArgumentCaptor.forClass(RefreshToken.class);
-        verify(refreshTokenRepository).save(saved.capture());
+        verify(refreshTokenRepository).insert(saved.capture());
         assertThat(saved.getValue().tokenHash())
                 .isNotEqualTo(tokens.refreshToken())
                 .isEqualTo(AuthService.hash(tokens.refreshToken()));
@@ -134,7 +139,7 @@ class AuthServiceTest {
 
         assertThatThrownBy(() -> authService.login("uet@gmail.com", "wrong"))
                 .isInstanceOf(UnauthorizedException.class);
-        verify(refreshTokenRepository, never()).save(any());
+        verify(refreshTokenRepository, never()).insert(any());
     }
 
     @Test
@@ -155,13 +160,24 @@ class AuthServiceTest {
         AuthTokens tokens = authService.refresh("old-token");
 
         assertThat(tokens.refreshToken()).isNotEqualTo("old-token");
+        verify(refreshTokenRepository).revoke(stored.id());
         ArgumentCaptor<RefreshToken> saved = ArgumentCaptor.forClass(RefreshToken.class);
-        verify(refreshTokenRepository, times(2)).save(saved.capture());
-        List<RefreshToken> all = saved.getAllValues();
-        assertThat(all.get(0).id()).isEqualTo(stored.id());
-        assertThat(all.get(0).revoked()).isTrue();
-        assertThat(all.get(1).tokenHash()).isEqualTo(AuthService.hash(tokens.refreshToken()));
-        assertThat(all.get(1).revoked()).isFalse();
+        verify(refreshTokenRepository).insert(saved.capture());
+        assertThat(saved.getValue().id()).isNotEqualTo(stored.id());
+        assertThat(saved.getValue().tokenHash()).isEqualTo(AuthService.hash(tokens.refreshToken()));
+        assertThat(saved.getValue().revoked()).isFalse();
+    }
+
+    @Test
+    void refreshLosingTheRevokeRaceIs401AndIssuesNothing() {
+        // Hai request cùng một token: request kia đã thu hồi trước, câu UPDATE có điều kiện không đổi dòng nào
+        storedToken("old-token", NOW.plusSeconds(60), false);
+        when(refreshTokenRepository.revoke(any())).thenReturn(false);
+
+        assertThatThrownBy(() -> authService.refresh("old-token"))
+                .isInstanceOf(UnauthorizedException.class);
+        verify(refreshTokenRepository, never()).insert(any());
+        verify(userRepository, never()).findById(any());
     }
 
     @Test
@@ -191,7 +207,8 @@ class AuthServiceTest {
 
         assertThatThrownBy(() -> authService.refresh("old-token"))
                 .isInstanceOf(UnauthorizedException.class);
-        verify(refreshTokenRepository, never()).save(any());
+        verify(refreshTokenRepository, never()).revoke(any());
+        verify(refreshTokenRepository, never()).insert(any());
     }
 
     @Test
@@ -218,10 +235,7 @@ class AuthServiceTest {
 
         authService.logout(USER.id(), "my-token");
 
-        ArgumentCaptor<RefreshToken> saved = ArgumentCaptor.forClass(RefreshToken.class);
-        verify(refreshTokenRepository).save(saved.capture());
-        assertThat(saved.getValue().id()).isEqualTo(stored.id());
-        assertThat(saved.getValue().revoked()).isTrue();
+        verify(refreshTokenRepository).revoke(stored.id());
     }
 
     @Test
@@ -230,7 +244,7 @@ class AuthServiceTest {
 
         authService.logout(UUID.randomUUID(), "my-token");
 
-        verify(refreshTokenRepository, never()).save(any());
+        verify(refreshTokenRepository, never()).revoke(any());
     }
 
     @Test
@@ -239,7 +253,7 @@ class AuthServiceTest {
 
         authService.logout(USER.id(), "made-up");
 
-        verify(refreshTokenRepository, never()).save(any());
+        verify(refreshTokenRepository, never()).revoke(any());
     }
 
     private RefreshToken storedToken(String rawToken, Instant expiresAt, boolean revoked) {

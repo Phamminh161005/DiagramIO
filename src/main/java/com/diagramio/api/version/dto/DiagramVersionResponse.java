@@ -1,7 +1,7 @@
 package com.diagramio.api.version.dto;
 
-import com.diagramio.domain.version.DiagramVersion;
 import com.diagramio.api.RawJsonSerializer;
+import com.diagramio.domain.version.DiagramVersion;
 import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 import io.swagger.v3.oas.annotations.media.Schema;
 import java.time.Instant;

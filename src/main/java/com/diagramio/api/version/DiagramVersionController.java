@@ -1,5 +1,6 @@
 package com.diagramio.api.version;
 
+import com.diagramio.api.ConditionalRequests;
 import com.diagramio.api.dto.ErrorResponse;
 import com.diagramio.api.version.dto.CreateVersionRequest;
 import com.diagramio.api.version.dto.DiagramVersionResponse;
@@ -9,6 +10,7 @@ import com.diagramio.domain.access.Caller;
 import com.diagramio.domain.version.DiagramVersion;
 import com.diagramio.domain.version.DiagramVersionService;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.headers.Header;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
@@ -17,6 +19,7 @@ import jakarta.validation.Valid;
 import java.net.URI;
 import java.util.List;
 import java.util.UUID;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -79,11 +82,15 @@ public class DiagramVersionController {
     @GetMapping("/{version_id}")
     @Operation(summary = "Chi tiết cấu trúc JSON của một phiên bản",
             description = "Owner hoặc người có link chia sẻ view/edit.")
-    @ApiResponse(responseCode = "200", description = "Chi tiết phiên bản")
-    public DiagramVersionResponse get(@PathVariable("id") UUID diagramId, @PathVariable("version_id") UUID versionId,
-                                      Caller caller) {
-        return DiagramVersionResponse.from(
-                versionService.getVersion(diagramId, versionId, caller));
+    @ApiResponse(responseCode = "200", description = "Chi tiết phiên bản. Phiên bản là snapshot bất biến nên "
+            + "client được giữ mãi (Cache-Control: private, max-age=31536000, immutable)", headers =
+            @Header(name = HttpHeaders.CACHE_CONTROL, description = "max-age=31536000, private, immutable",
+                    schema = @Schema(types = "string")))
+    public ResponseEntity<DiagramVersionResponse> get(@PathVariable("id") UUID diagramId,
+                                                      @PathVariable("version_id") UUID versionId,
+                                                      Caller caller) {
+        return ResponseEntity.ok().cacheControl(ConditionalRequests.IMMUTABLE)
+                .body(DiagramVersionResponse.from(versionService.getVersion(diagramId, versionId, caller)));
     }
 
     @PostMapping("/{version_id}/restore")

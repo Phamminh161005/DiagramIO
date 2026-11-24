@@ -82,6 +82,15 @@ public class DiagramService {
         return access.requireDiagram(id, caller, Permission.VIEW);
     }
 
+    /**
+     * Kiểm tra quyền xem như {@link #getDiagramById} nhưng không đọc data; trả version hiện tại. Dùng cho GET có
+     * điều kiện: client đã có bản đúng version này thì không cần gửi lại nội dung. Người không có quyền vẫn nhận
+     * 401/403/404 như khi GET bình thường, nên không dò được version của sơ đồ riêng tư.
+     */
+    public DiagramAccessInfo getAccessInfo(UUID id, Caller caller) {
+        return access.require(id, caller, Permission.VIEW);
+    }
+
     /** Sơ đồ của tôi, mới sửa trước. diagramType null = mọi loại; title rỗng = không tìm theo tên. */
     public DiagramPage listMine(UUID ownerId, DiagramType diagramType, String title, int page, int size) {
         validatePage(page, size);

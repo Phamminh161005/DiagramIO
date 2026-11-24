@@ -1,7 +1,7 @@
 package com.diagramio.api.share.dto;
 
-import com.diagramio.domain.share.SharedDiagramView;
 import com.diagramio.api.RawJsonSerializer;
+import com.diagramio.domain.share.SharedDiagramView;
 import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 import io.swagger.v3.oas.annotations.media.Schema;
 

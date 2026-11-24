@@ -619,8 +619,11 @@ Báo cáo kết quả trình bày mọi bài toán theo cùng một khung: kịc
 - [x] `danh-gia-hien-trang.md` phần không phụ thuộc phần cứng; thứ tự ưu tiên đề xuất (B1 trước, thứ tự mục con theo số đo)
 
 **Must**
-- [ ] B1: access info, UPDATE có điều kiện, snapshot và khôi phục trong DB, projection, `ORDER BY`, index, `Persistable`, tinh chỉnh runtime
-- [ ] B2: decorator cache, write-through có so version, pub/sub hủy L1, ETag/304, micro-cache danh sách công khai
+- [x] B1: access info, UPDATE có điều kiện, snapshot và khôi phục trong DB, projection, `ORDER BY`, index, `Persistable` ([ADR-0002](adr/0002-toi-uu-truy-cap-du-lieu.md), tag `v2.1-b1`)
+  - [ ] Số đo C1 trên Kaggle (ma trận `b12`), EXPLAIN trước và sau; tinh chỉnh runtime (ma trận `tune`)
+- [x] B2: decorator cache, write-through có so version, bia mộ, pub/sub hủy L1 kèm heartbeat, chạy tiếp bằng CSDL khi Redis hỏng, ETag/304 ([ADR-0003](adr/0003-cache-hai-tang-etag.md))
+  - Micro-cache danh sách công khai: có nhưng tắt mặc định (lý do ở ADR-0003 mục 4)
+  - [ ] Số đo C2, C3 trên Kaggle (ma trận `b12`)
 - [ ] B3: cache token trên Redis, thu hồi tức thì, E2E hai instance
 - [ ] B4: Nginx, graceful shutdown, `docker-compose.scale.yml`, đo 1-2-3 instance, W7
 - [ ] B5: rate limit, bulkhead BCrypt, phát hiện refresh token bị dùng lại, W5

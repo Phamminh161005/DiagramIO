@@ -76,6 +76,11 @@
 - Keep authorization checks, version checks, and related writes within the appropriate transaction boundaries.
 - Read only the columns an operation needs: lists and version history use summary projections without `data`; snapshots and restores copy `data` inside the database (`INSERT ... SELECT`, `UPDATE ... FROM`) instead of sending it through the app.
 - Do not mix JPA and hand-written SQL on the same table: inside one transaction a JPA entity already loaded does not see JDBC `UPDATE`/`DELETE`. The `diagrams`, `diagram_versions` adapters are SQL only.
+- Diagrams and versions are cached (`infrastructure/cache`, ADR-0003; mode `diagramio.cache.mode`: `none`, `local`, `redis`, `two-level`). Keep its invariants:
+  - Every write to `diagrams` goes through `DiagramRepository`, so the decorator can write the new state to the cache after commit. Never change that table from another adapter or with SQL elsewhere.
+  - The cache only accepts a newer `version` (version-checked write-through); deletes leave a tombstone. Do not add plain "put" or "evict then reload" paths.
+  - Cache entries are immutable (`CachedDiagram`); callers always get a new `Diagram`.
+  - A conditional GET checks access before answering 304; never return 304 to a caller without the permission.
 - Use transactions by rule, not everywhere. Domain services get them through the `TransactionRunner` port:
 
 | Operation | Transaction | Example |
@@ -104,7 +109,7 @@
 - Add or update tests for authentication, authorization, public/private access, sharing-token revocation, invalid payloads, optimistic-lock conflicts, immutable versions, and safe restoration.
 - Include both successful and denied paths for owner, editor, viewer, unauthenticated, and public requests.
 - Verify status codes and response shapes, not only whether a request succeeds.
-- `SqlPerRequestE2eTest` pins the SQL statements, commits, pool checkouts, and `data` round trips of every endpoint. A change that alters them must update the expected numbers in the same PR; performance claims are measured with `bench/` (see `docs/adr/0001-phuong-phap-do.md`).
+- `SqlPerRequestE2eTest` pins the SQL statements, commits, pool checkouts, and `data` round trips of every endpoint (with the cache off, `diagramio.cache.mode=none`). A change that alters them must update the expected numbers in the same PR; performance claims are measured with `bench/` (see `docs/adr/0001-phuong-phap-do.md`).
 - Run the smallest relevant formatter, linter, type checker, and test commands before considering a change complete.
 - Use the repository's documented commands and configuration; do not invent replacement tooling without a clear need.
 

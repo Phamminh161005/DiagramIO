@@ -4,7 +4,7 @@
 #
 #   bash bench/kaggle/setup.sh
 #
-# Cài: PostgreSQL $PG_MAJOR (kho PGDG, có pg_stat_statements và pg_prewarm), JDK Temurin, k6, async-profiler.
+# Cài: PostgreSQL $PG_MAJOR (kho PGDG, có pg_stat_statements và pg_prewarm), Redis, JDK Temurin, k6, async-profiler.
 # Cấu hình PostgreSQL một lần ở đây và dùng chung cho mọi cấu hình được đo.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
@@ -101,6 +101,36 @@ CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
 GRANT pg_read_all_stats TO $DB_USER;
 EOF
 
+# ---- Redis $REDIS_VERSION từ packages.redis.io (cùng bản chính với docker-compose và Testcontainers); kho đó
+# không có bản này thì dùng bản của hệ điều hành (Redis 6 trở lên đủ cho mọi lệnh app dùng). Phiên bản thật được
+# ghi vào env.txt.
+if ! command -v redis-server > /dev/null; then
+  log "Cài Redis $REDIS_VERSION"
+  if curl -fsSL https://packages.redis.io/gpg | gpg --dearmor --yes -o /usr/share/keyrings/redis-archive-keyring.gpg; then
+    echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $CODENAME main" \
+      > /etc/apt/sources.list.d/redis.list
+    apt_update
+  else
+    log "CẢNH BÁO: không thêm được kho packages.redis.io"
+  fi
+  # Bản mới nhất của dòng $REDIS_VERSION trong kho (ví dụ 6:7.4.2-1rl1~jammy1). awk đọc hết đầu vào thay vì
+  # dừng ở dòng đầu khớp: dừng sớm làm apt-cache nhận SIGPIPE, và với pipefail thì cả script dừng theo.
+  redis_pkg=$(apt-cache madison redis-server 2>/dev/null \
+    | awk -v v="$REDIS_VERSION" '{gsub(/ /, "", $3)} !found && index($3, ":" v ".") > 0 {print $3; found = 1}')
+  if [ -n "$redis_pkg" ]; then
+    apt-get install -y -qq --no-install-recommends "redis-server=$redis_pkg" "redis-tools=$redis_pkg" > /dev/null || true
+  fi
+  if ! command -v redis-server > /dev/null; then
+    log "CẢNH BÁO: không có Redis $REDIS_VERSION, dùng bản của hệ điều hành"
+    apt-get install -y -qq --no-install-recommends redis-server > /dev/null || true
+  fi
+fi
+command -v redis-server > /dev/null || die "cài Redis thất bại"
+# Gói có thể đã tự bật một redis-server cấu hình mặc định (có ghi đĩa, không ghim CPU): tắt đi, bật bản của bộ đo
+redis_cli shutdown nosave > /dev/null 2>&1 || true
+sleep 1
+ensure_redis
+
 # ---- Công cụ tải về, có kiểm tra SHA-256 khi bản phát hành có công bố
 download() {  # download <url> <file>; thử lại cả khi đường truyền đứt giữa chừng
   curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 -o "$2" "$1"
@@ -146,4 +176,5 @@ log "Sẵn sàng:"
 "$K6" version | head -1
 "$ASPROF" --version 2>&1 | head -1
 pg_admin -d postgres -At -c "SELECT version()"
+redis-server --version
 log "CPU hệ thống được đo: $SUT_CPUS; CPU tạo tải: $LOADGEN_CPUS"

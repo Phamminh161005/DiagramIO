@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Trạng thái | Đề xuất, chờ nhóm duyệt |
-| Tiến độ | M0: bộ đo và các phép đo không phụ thuộc phần cứng đã xong ([danh-gia-hien-trang.md](pha-2/danh-gia-hien-trang.md), [ADR-0001](adr/0001-phuong-phap-do.md), [bench/](../bench/README.md)); còn chạy ma trận `m0` trên Kaggle |
+| Tiến độ | M0 xong: bộ đo, số liệu C0 trên Kaggle ([danh-gia-hien-trang.md](pha-2/danh-gia-hien-trang.md), [ADR-0001](adr/0001-phuong-phap-do.md), [bench/](../bench/README.md)) |
 | Mốc so sánh (baseline) | `main` tại commit `35503aa`, gắn tag `v1.0-phase1` trước khi bắt đầu. C0 của mọi phép so sánh là mã này cộng phần đo của M0 (Actuator, Micrometer; không đổi hành vi), gắn tag `v2.0-m0` |
 | Phần cứng đánh giá duy nhất | Kaggle Notebook CPU (4 vCPU, ~30 GB RAM); ghi lại `lscpu` ở mỗi phiên |
 | Tài liệu liên quan | [README.md](../README.md), [AGENTS.md](../AGENTS.md), [luong-nghiep-vu.md](luong-nghiep-vu.md), [openapi.yaml](openapi.yaml) |
@@ -609,18 +609,21 @@ Báo cáo kết quả trình bày mọi bài toán theo cùng một khung: kịc
 ## 9. Checklist
 
 **M0 – Phép đo**
-- [ ] Gắn tag `v1.0-phase1` (commit `35503aa`) và `v2.0-m0` (commit M0, mốc C0)
-- [x] `bench/kaggle/setup.sh` chạy được từ một máy trắng (đã thử trên container Ubuntu 22.04 và 24.04; còn chạy thật trên Kaggle)
+- [x] Gắn tag `v1.0-phase1` (commit `35503aa`) và `v2.0-m0` (commit `15f2356`, mốc C0)
+- [x] `bench/kaggle/setup.sh` chạy được từ một máy trắng (container Ubuntu 22.04, 24.04 và Kaggle)
 - [x] Seed dữ liệu, template DB, reset trước mỗi lần chạy
 - [x] k6 W1–W3 (Locust W1 không làm, lý do ở mục 3.4)
 - [x] Actuator + endpoint Prometheus + script cào số liệu; CPU theo tiến trình (`procstat.py` thay `pidstat`); `pg_stat_statements`
 - [x] Bảng SQL mỗi request (`SqlPerRequestE2eTest`); công cụ flame graph
-- [ ] Đo lại C0 trên Kaggle (ma trận `m0`, khoảng 3 giờ) và điền mục 6 của `danh-gia-hien-trang.md`
+- [x] Đo lại C0 trên Kaggle (phiên `20261124-061459-m0`), điền mục 6 của `danh-gia-hien-trang.md`
 - [x] `danh-gia-hien-trang.md` phần không phụ thuộc phần cứng; thứ tự ưu tiên đề xuất (B1 trước, thứ tự mục con theo số đo)
 
 **Must**
-- [ ] B1: access info, UPDATE có điều kiện, snapshot và khôi phục trong DB, projection, `ORDER BY`, index, `Persistable`, tinh chỉnh runtime
-- [ ] B2: decorator cache, write-through có so version, pub/sub hủy L1, ETag/304, micro-cache danh sách công khai
+- [x] B1: access info, UPDATE có điều kiện, snapshot và khôi phục trong DB, projection, `ORDER BY`, index, `Persistable` ([ADR-0002](adr/0002-toi-uu-truy-cap-du-lieu.md), tag `v2.1-b1`)
+  - [ ] Số đo C1 trên Kaggle (ma trận `b12`), EXPLAIN trước và sau; tinh chỉnh runtime (ma trận `tune`)
+- [x] B2: decorator cache, write-through có so version, bia mộ, pub/sub hủy L1 kèm heartbeat, chạy tiếp bằng CSDL khi Redis hỏng, ETag/304 ([ADR-0003](adr/0003-cache-hai-tang-etag.md))
+  - Micro-cache danh sách công khai: có nhưng tắt mặc định (lý do ở ADR-0003 mục 4)
+  - [ ] Số đo C2, C3 trên Kaggle (ma trận `b12`)
 - [ ] B3: cache token trên Redis, thu hồi tức thì, E2E hai instance
 - [ ] B4: Nginx, graceful shutdown, `docker-compose.scale.yml`, đo 1-2-3 instance, W7
 - [ ] B5: rate limit, bulkhead BCrypt, phát hiện refresh token bị dùng lại, W5

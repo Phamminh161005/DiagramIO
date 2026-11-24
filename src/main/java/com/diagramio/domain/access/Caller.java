@@ -1,6 +1,6 @@
 package com.diagramio.domain.access;
 
-import com.diagramio.domain.diagram.Diagram;
+import com.diagramio.domain.diagram.DiagramAccessInfo;
 import java.util.UUID;
 
 /**
@@ -23,17 +23,17 @@ public record Caller(UUID userId, UUID sharedDiagramId, ShareRole shareRole) {
     }
 
     /** Sơ đồ công khai, hoặc owner, hoặc token chia sẻ (view/edit) của sơ đồ này. */
-    public boolean canView(Diagram diagram) {
+    public boolean canView(DiagramAccessInfo diagram) {
         return diagram.isPublic() || canViewHistory(diagram);
     }
 
     /** Chỉ owner: xóa sơ đồ, quản lý liên kết chia sẻ. Token chia sẻ (kể cả edit) không đủ. */
-    public boolean canManage(Diagram diagram) {
+    public boolean canManage(DiagramAccessInfo diagram) {
         return diagram.isOwner(userId);
     }
 
     /** Owner hoặc token chia sẻ quyền edit của chính sơ đồ này. */
-    public boolean canEdit(Diagram diagram) {
+    public boolean canEdit(DiagramAccessInfo diagram) {
         return canManage(diagram) || (sharesDiagram(diagram) && shareRole == ShareRole.EDIT);
     }
 
@@ -41,7 +41,7 @@ public record Caller(UUID userId, UUID sharedDiagramId, ShareRole shareRole) {
      * Owner hoặc token chia sẻ (view/edit) của sơ đồ này. Cố ý bỏ qua trạng thái công khai:
      * công khai sơ đồ không được làm lộ các snapshot cũ mà owner đã xóa dữ liệu trước khi công khai.
      */
-    public boolean canViewHistory(Diagram diagram) {
+    public boolean canViewHistory(DiagramAccessInfo diagram) {
         return canEdit(diagram) || (sharesDiagram(diagram) && shareRole != null);
     }
 
@@ -49,11 +49,11 @@ public record Caller(UUID userId, UUID sharedDiagramId, ShareRole shareRole) {
      * Có biết người gọi là ai đối với sơ đồ này không: có tài khoản, hoặc cầm link của chính sơ đồ này.
      * Không có thì bị từ chối là 401 (đăng nhập có thể đổi kết quả), có thì là 403.
      */
-    public boolean hasIdentityFor(Diagram diagram) {
+    public boolean hasIdentityFor(DiagramAccessInfo diagram) {
         return userId != null || sharesDiagram(diagram);
     }
 
-    private boolean sharesDiagram(Diagram diagram) {
-        return sharedDiagramId != null && sharedDiagramId.equals(diagram.getId());
+    private boolean sharesDiagram(DiagramAccessInfo diagram) {
+        return sharedDiagramId != null && sharedDiagramId.equals(diagram.id());
     }
 }

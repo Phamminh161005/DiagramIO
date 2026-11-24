@@ -5,6 +5,7 @@ import com.diagramio.domain.access.ShareRole;
 import com.diagramio.domain.exception.ForbiddenException;
 import com.diagramio.domain.exception.NotFoundException;
 import com.diagramio.domain.diagram.Diagram;
+import com.diagramio.domain.diagram.DiagramAccessInfo;
 import com.diagramio.domain.diagram.DiagramData;
 import com.diagramio.domain.diagram.DiagramRepository;
 import com.diagramio.domain.diagram.DiagramType;
@@ -25,6 +26,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -65,7 +67,7 @@ class ShareServiceTest {
     @Test
     @DisplayName("Chủ sở hữu có thể lấy danh sách liên kết chia sẻ")
     void getShares_OwnerSuccess() {
-        when(diagramRepository.findById(diagramId)).thenReturn(Optional.of(sampleDiagram));
+        stubOwnerInfo();
         DiagramShare share = new DiagramShare(UUID.randomUUID(), diagramId, "token123", ShareRole.VIEW, Instant.now());
         when(shareRepository.findByDiagramId(diagramId)).thenReturn(List.of(share));
 
@@ -78,7 +80,7 @@ class ShareServiceTest {
     @Test
     @DisplayName("Người dùng khác cố lấy danh sách chia sẻ sẽ bị 403 Forbidden")
     void getShares_ForbiddenForNonOwner() {
-        when(diagramRepository.findById(diagramId)).thenReturn(Optional.of(sampleDiagram));
+        stubOwnerInfo();
 
         assertThatThrownBy(() -> shareService.getShares(diagramId, Caller.user(otherUserId)))
                 .isInstanceOf(ForbiddenException.class)
@@ -88,7 +90,7 @@ class ShareServiceTest {
     @Test
     @DisplayName("Người cầm link edit vẫn không được quản lý liên kết (chỉ owner)")
     void createShare_ForbiddenForEditShareToken() {
-        when(diagramRepository.findById(diagramId)).thenReturn(Optional.of(sampleDiagram));
+        stubOwnerInfo();
 
         assertThatThrownBy(() -> shareService.createShare(diagramId, ShareRole.EDIT,
                 Caller.shareToken(diagramId, ShareRole.EDIT)))
@@ -98,7 +100,7 @@ class ShareServiceTest {
     @Test
     @DisplayName("Sơ đồ không tồn tại sẽ bị 404 NotFound")
     void getShares_DiagramNotFound() {
-        when(diagramRepository.findById(diagramId)).thenReturn(Optional.empty());
+        when(diagramRepository.findAccessInfo(diagramId)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> shareService.getShares(diagramId, Caller.user(ownerId)))
                 .isInstanceOf(NotFoundException.class);
@@ -107,16 +109,46 @@ class ShareServiceTest {
     @Test
     @DisplayName("Chủ sở hữu tạo liên kết chia sẻ thành công với quyền view")
     void createShare_Success() {
-        when(diagramRepository.findById(diagramId)).thenReturn(Optional.of(sampleDiagram));
-        when(shareRepository.save(any(DiagramShare.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        stubOwnerInfo();
+        when(shareRepository.insert(any(DiagramShare.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         DiagramShare created = shareService.createShare(diagramId, ShareRole.VIEW, Caller.user(ownerId));
 
         assertThat(created).isNotNull();
         assertThat(created.getDiagramId()).isEqualTo(diagramId);
         assertThat(created.getRole()).isEqualTo(ShareRole.VIEW);
-        assertThat(created.getShareToken()).isNotBlank();
-        verify(shareRepository).save(any(DiagramShare.class));
+        assertThat(created.getShareToken()).matches("[0-9a-f]{48}");
+        verify(shareRepository).insert(any(DiagramShare.class));
+        verify(shareRepository, never()).findByShareToken(any());   // trùng token do ràng buộc UNIQUE bắt
+        verify(diagramRepository, never()).findById(any());          // kiểm tra chủ không đọc data
+    }
+
+    @Test
+    @DisplayName("Token trùng (UNIQUE) thì sinh token khác và thử lại")
+    void createShare_RetriesWithANewTokenWhenTaken() {
+        stubOwnerInfo();
+        ArgumentCaptor<DiagramShare> attempts = ArgumentCaptor.forClass(DiagramShare.class);
+        when(shareRepository.insert(attempts.capture()))
+                .thenThrow(new ShareTokenTakenException())
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        DiagramShare created = shareService.createShare(diagramId, ShareRole.EDIT, Caller.user(ownerId));
+
+        assertThat(attempts.getAllValues()).hasSize(2);
+        assertThat(attempts.getAllValues().get(0).getShareToken())
+                .isNotEqualTo(attempts.getAllValues().get(1).getShareToken());
+        assertThat(created).isSameAs(attempts.getAllValues().get(1));
+    }
+
+    @Test
+    @DisplayName("Trùng token liên tiếp quá số lần cho phép thì báo 409")
+    void createShare_GivesUpAfterThreeCollisions() {
+        stubOwnerInfo();
+        when(shareRepository.insert(any(DiagramShare.class))).thenThrow(new ShareTokenTakenException());
+
+        assertThatThrownBy(() -> shareService.createShare(diagramId, ShareRole.VIEW, Caller.user(ownerId)))
+                .isInstanceOf(ShareTokenTakenException.class);
+        verify(shareRepository, times(3)).insert(any(DiagramShare.class));
     }
 
 
@@ -126,41 +158,65 @@ class ShareServiceTest {
         UUID shareId = UUID.randomUUID();
         DiagramShare storedAfterUpdate = new DiagramShare(shareId, diagramId, "token123", ShareRole.EDIT, Instant.now());
 
-        when(diagramRepository.findById(diagramId)).thenReturn(Optional.of(sampleDiagram));
-        when(shareRepository.updateRole(shareId, diagramId, ShareRole.EDIT)).thenReturn(true);
-        when(shareRepository.findById(shareId)).thenReturn(Optional.of(storedAfterUpdate));
+        stubOwnerInfo();
+        when(shareRepository.updateRole(shareId, diagramId, ShareRole.EDIT)).thenReturn(Optional.of(storedAfterUpdate));
 
         DiagramShare updated = shareService.updateShareRole(diagramId, shareId, ShareRole.EDIT, Caller.user(ownerId));
 
         assertThat(updated.getRole()).isEqualTo(ShareRole.EDIT);
         assertThat(updated.getShareToken()).isEqualTo("token123");
-        verify(shareRepository, never()).save(any(DiagramShare.class));
     }
 
     @Test
     @DisplayName("Đổi quyền link vừa bị thu hồi trả 404, không tạo lại link")
     void updateShareRole_RevokedLink_NotFoundAndNotRecreated() {
         UUID shareId = UUID.randomUUID();
-        when(diagramRepository.findById(diagramId)).thenReturn(Optional.of(sampleDiagram));
-        when(shareRepository.updateRole(shareId, diagramId, ShareRole.EDIT)).thenReturn(false);
+        stubOwnerInfo();
+        when(shareRepository.updateRole(shareId, diagramId, ShareRole.EDIT)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> shareService.updateShareRole(diagramId, shareId, ShareRole.EDIT, Caller.user(ownerId)))
                 .isInstanceOf(NotFoundException.class);
-        verify(shareRepository, never()).save(any(DiagramShare.class));
+        verify(shareRepository, never()).insert(any(DiagramShare.class));
     }
 
     @Test
     @DisplayName("Thu hồi liên kết chia sẻ thành công")
     void revokeShare_Success() {
         UUID shareId = UUID.randomUUID();
-        DiagramShare oldShare = new DiagramShare(shareId, diagramId, "token123", ShareRole.VIEW, Instant.now());
-
-        when(diagramRepository.findById(diagramId)).thenReturn(Optional.of(sampleDiagram));
-        when(shareRepository.findById(shareId)).thenReturn(Optional.of(oldShare));
+        stubOwnerInfo();
+        when(shareRepository.deleteByIdAndDiagramId(shareId, diagramId)).thenReturn(true);
 
         shareService.revokeShare(diagramId, shareId, Caller.user(ownerId));
 
-        verify(shareRepository).deleteById(shareId);
+        verify(shareRepository).deleteByIdAndDiagramId(shareId, diagramId);
+    }
+
+    @Test
+    @DisplayName("Thu hồi link không có hoặc thuộc sơ đồ khác trả 404")
+    void revokeShare_UnknownOrOtherDiagramIs404() {
+        UUID shareId = UUID.randomUUID();
+        stubOwnerInfo();
+        when(shareRepository.deleteByIdAndDiagramId(shareId, diagramId)).thenReturn(false);
+
+        assertThatThrownBy(() -> shareService.revokeShare(diagramId, shareId, Caller.user(ownerId)))
+                .isInstanceOf(NotFoundException.class)
+                .hasMessage("Share link not found");
+    }
+
+    @Test
+    @DisplayName("Link edit không được thu hồi link")
+    void revokeShare_ForbiddenForEditShareToken() {
+        stubOwnerInfo();
+
+        assertThatThrownBy(() -> shareService.revokeShare(diagramId, UUID.randomUUID(),
+                Caller.shareToken(diagramId, ShareRole.EDIT)))
+                .isInstanceOf(ForbiddenException.class);
+        verify(shareRepository, never()).deleteByIdAndDiagramId(any(), any());
+    }
+
+    private void stubOwnerInfo() {
+        when(diagramRepository.findAccessInfo(diagramId))
+                .thenReturn(Optional.of(new DiagramAccessInfo(diagramId, ownerId, false, 1)));
     }
 
     @Test

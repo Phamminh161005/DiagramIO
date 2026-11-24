@@ -33,6 +33,11 @@ DB_PASSWORD="${DB_PASSWORD:-bench}"
 DB_TEMPLATE="${DB_TEMPLATE:-bench_template}"
 DB_RUN="${DB_RUN:-bench_run}"
 
+# ---- Redis (cache L2 của B2, chỉ cấu hình two-level dùng; các cấu hình khác để nó chạy không)
+REDIS_PORT="${REDIS_PORT:-6379}"
+REDIS_MAXMEMORY="${REDIS_MAXMEMORY:-2gb}"
+REDIS_VERSION="${REDIS_VERSION:-7.4}"                 # bản chính lấy từ packages.redis.io (khớp Testcontainers)
+
 # ---- Ứng dụng
 APP_PORT="${APP_PORT:-8080}"
 MGMT_PORT="${MGMT_PORT:-9090}"
@@ -41,6 +46,11 @@ JVM_OPTS="${JVM_OPTS:--Xms$JVM_HEAP -Xmx$JVM_HEAP -XX:+UseG1GC -XX:+AlwaysPreTou
 JWT_SECRET="${JWT_SECRET:-diagramio-bench-only-secret-not-for-production-0123456789}"
 # Access token sống đủ lâu cho một lần chạy dài (mặc định 15 phút); không ảnh hưởng chi phí kiểm tra token
 JWT_MINUTES="${JWT_MINUTES:-480}"
+# Tham số chung cho mọi cấu hình, kể cả bản dựng từ tag cũ, để phép so sánh luôn công bằng. Flame graph của M0
+# cho thấy Spring Security quan sát (observation) từng filter và mỗi lần cập nhật một LongTaskTimer O(n) theo số
+# request đang chạy: gần 8% CPU của app ở W2 là chi phí của chính phần đo. Hai cờ dưới đây tắt phần đó mà vẫn
+# giữ số liệu http.server.requests.
+BENCH_APP_ARGS="${BENCH_APP_ARGS---management.observations.enable.spring.security=false --management.observations.long-task-timer.enabled=false}"
 
 log() { echo "[$(date +%H:%M:%S)] $*"; }
 die() { echo "[$(date +%H:%M:%S)] LỖI: $*" >&2; exit 1; }
@@ -109,7 +119,7 @@ start_app() {
     --spring.datasource.url="jdbc:postgresql://127.0.0.1:$PG_PORT/$database" \
     --spring.datasource.username="$DB_USER" --spring.datasource.password="$DB_PASSWORD" \
     --jwt.secret="$JWT_SECRET" --jwt.access-token-minutes="$JWT_MINUTES" \
-    "$@" > "$logdir/app.log" 2>&1 &
+    $BENCH_APP_ARGS "$@" > "$logdir/app.log" 2>&1 &
   APP_PID=$!
   if ! wait_http "http://127.0.0.1:$APP_PORT/api/v1/health" 180; then
     tail -n 60 "$logdir/app.log" >&2
@@ -135,9 +145,30 @@ stop_app() {
   APP_PID=
 }
 
+redis_cli() { redis-cli -h 127.0.0.1 -p "$REDIS_PORT" "$@"; }
+
+# Bật Redis nếu chưa chạy: trên CPU của hệ thống được đo (như PostgreSQL), chỉ nghe localhost, không ghi xuống
+# đĩa (chỉ là cache). Máy chưa cài Redis (setup cũ) thì bỏ qua: các cấu hình không dùng Redis vẫn chạy được.
+ensure_redis() {
+  command -v redis-server > /dev/null || return 0
+  redis_cli ping > /dev/null 2>&1 && return 0
+  mkdir -p "$WORK_DIR"
+  taskset -c "$SUT_CPUS" redis-server --port "$REDIS_PORT" --bind 127.0.0.1 --save '' --appendonly no \
+    --maxmemory "$REDIS_MAXMEMORY" --maxmemory-policy volatile-lru --daemonize yes --logfile "$WORK_DIR/redis.log"
+  for _ in $(seq 1 30); do
+    redis_cli ping > /dev/null 2>&1 && return 0
+    sleep 0.5
+  done
+  die "Redis không lên (log: $WORK_DIR/redis.log)"
+}
+
 # CSDL của một lần chạy: chép nguyên từ bench_template rồi nạp vào bộ đệm, để lần chạy nào cũng bắt đầu
-# từ cùng một trạng thái (dữ liệu ghi của lần trước không ảnh hưởng lần sau)
+# từ cùng một trạng thái (dữ liệu ghi của lần trước không ảnh hưởng lần sau). Cache Redis cũng được xóa sạch.
 reset_run_db() {
+  if command -v redis-server > /dev/null; then
+    ensure_redis
+    redis_cli FLUSHALL > /dev/null
+  fi
   pg_admin -d postgres -c "DROP DATABASE IF EXISTS $DB_RUN WITH (FORCE)"
   pg_admin -d postgres -c "CREATE DATABASE $DB_RUN TEMPLATE $DB_TEMPLATE OWNER $DB_USER STRATEGY FILE_COPY"
   pg_admin -d "$DB_RUN" -c "SELECT count(pg_prewarm(c.oid)) FROM pg_class c

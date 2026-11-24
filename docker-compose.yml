@@ -23,6 +23,24 @@ services:
     networks:
       - diagramio
 
+  redis:
+    # Cache L2 dùng chung giữa các instance (B2, ADR-0003); chỉ được dùng khi DIAGRAMIO_CACHE_MODE là redis hoặc
+    # two-level. Chỉ là cache nên không lưu xuống đĩa; đầy thì bỏ khóa có hạn dùng ít dùng nhất.
+    image: redis:7.4-alpine
+    container_name: diagramio_redis
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "512mb",
+              "--maxmemory-policy", "volatile-lru"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - diagramio
+
   app:
     build: .
     image: diagramio-app
@@ -31,12 +49,17 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_started
     environment:
       # Trong mạng Docker, DB được gọi bằng tên service "postgres" và cổng bên trong 5432
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-diagram_app}
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-root}
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-secretpassword}
       JWT_SECRET: ${JWT_SECRET:-dev-only-secret-please-change-it-32chars}
+      # Cache sơ đồ: none | local | redis | two-level (mặc định local, không cần Redis)
+      DIAGRAMIO_CACHE_MODE: ${DIAGRAMIO_CACHE_MODE:-local}
+      SPRING_DATA_REDIS_HOST: redis
     ports:
       - "${APP_PORT:-8080}:8080"
     healthcheck:

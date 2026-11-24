@@ -19,17 +19,4 @@ public class DiagramShareMapper {
                 entity.getCreatedAt()
         );
     }
-
-    public DiagramShareEntity toEntity(DiagramShare domain) {
-        if (domain == null) {
-            return null;
-        }
-        return new DiagramShareEntity(
-                domain.getId(),
-                domain.getDiagramId(),
-                domain.getShareToken(),
-                domain.getRole().value(),
-                domain.getCreatedAt()
-        );
-    }
 }

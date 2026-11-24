@@ -1,6 +1,6 @@
 package com.diagramio.domain.access;
 
-import com.diagramio.domain.diagram.Diagram;
+import com.diagramio.domain.diagram.DiagramAccessInfo;
 
 /**
  * Các mức quyền trên một sơ đồ, mỗi mức ứng với một luật trong {@link Caller}.
@@ -22,7 +22,7 @@ public enum Permission {
         this.deniedMessage = deniedMessage;
     }
 
-    public boolean isGrantedTo(Caller caller, Diagram diagram) {
+    public boolean isGrantedTo(Caller caller, DiagramAccessInfo diagram) {
         return switch (this) {
             case VIEW -> caller.canView(diagram);
             case VIEW_HISTORY -> caller.canViewHistory(diagram);

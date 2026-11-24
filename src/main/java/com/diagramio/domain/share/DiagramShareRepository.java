@@ -13,19 +13,20 @@ public interface DiagramShareRepository {
 
     List<DiagramShare> findByDiagramId(UUID diagramId);
 
-    Optional<DiagramShare> findById(UUID id);
-
     Optional<DiagramShare> findByShareToken(String shareToken);
 
-    DiagramShare save(DiagramShare share);
+    /**
+     * Thêm link mới bằng một câu INSERT. Token trùng (ràng buộc UNIQUE) thì ném {@link ShareTokenTakenException}
+     * để service sinh token khác, thay vì kiểm tra trước bằng một câu SELECT ở mọi lần tạo link.
+     */
+    DiagramShare insert(DiagramShare share);
 
     /**
-     * Đổi quyền bằng một câu UPDATE có điều kiện. Trả false nếu link không còn (đã thu hồi)
+     * Đổi quyền bằng một câu UPDATE có điều kiện và trả link sau khi đổi. Rỗng nếu link không còn (đã thu hồi)
      * hoặc không thuộc sơ đồ này; không bao giờ tạo lại link đã bị thu hồi.
      */
-    boolean updateRole(UUID shareId, UUID diagramId, ShareRole role);
+    Optional<DiagramShare> updateRole(UUID shareId, UUID diagramId, ShareRole role);
 
-    void deleteById(UUID id);
-
-    boolean existsByShareToken(String shareToken);
+    /** Thu hồi bằng một câu DELETE có điều kiện; false nếu link không có hoặc thuộc sơ đồ khác. */
+    boolean deleteByIdAndDiagramId(UUID shareId, UUID diagramId);
 }

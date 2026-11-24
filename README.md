@@ -27,7 +27,8 @@ Pha 1 không làm: giao diện frontend và canvas; cộng tác thời gian th�
 | Thành phần | Lựa chọn |
 |---|---|
 | Ngôn ngữ, framework | Java 21, Spring Boot 3.4 (Web, Validation, Security) |
-| CSDL | PostgreSQL 16, Spring Data JPA, Flyway quản lý schema |
+| CSDL | PostgreSQL 16, Flyway quản lý schema; Spring Data JPA cho tài khoản, token, link; SQL viết tay (`NamedParameterJdbcTemplate`) cho sơ đồ và phiên bản |
+| Cache | Caffeine trong JVM; Redis 7 (Lettuce) dùng chung khi chạy nhiều bản; ETag và 304 |
 | Đo lường | Spring Boot Actuator, Micrometer Prometheus (cổng quản trị riêng, chỉ localhost); bộ đo k6 trong `bench/` |
 | Xác thực | JWT (jjwt), BCrypt, refresh token lưu dạng SHA-256 |
 | Tài liệu API | springdoc-openapi (Swagger UI) |
@@ -42,7 +43,7 @@ Pha 1 không làm: giao diện frontend và canvas; cộng tác thời gian th�
 |---|---|---|---|
 | API | `api` | Controller, DTO, kiểm tra đầu vào, `GlobalExceptionHandler` đổi ngoại lệ nghiệp vụ thành mã HTTP | Spring Web |
 | Nghiệp vụ | `domain` | Model, service, interface repository, ngoại lệ nghiệp vụ, luật phân quyền | Chỉ Java thuần |
-| Truy cập dữ liệu | `infrastructure` | Entity JPA, Spring Data repository, adapter cài đặt interface của domain, BCrypt, JWT, filter xác thực | Spring Data JPA, Spring Security |
+| Truy cập dữ liệu | `infrastructure` | Entity JPA, Spring Data repository, adapter SQL, adapter cài đặt interface của domain, cache (decorator), BCrypt, JWT, filter xác thực | Spring Data JPA, JDBC, Caffeine, Spring Data Redis, Spring Security |
 | Lắp ghép | `config` | Tạo service của domain bằng `@Bean`, cấu hình bảo mật và OpenAPI | Spring |
 
 Tầng nghiệp vụ không import Spring, JPA hay Servlet (không có `@Service`, `@Entity`, `@Transactional`). Quy tắc này được `ArchitectureTest` (ArchUnit) kiểm tra mỗi lần chạy test.
@@ -53,9 +54,11 @@ Trong mỗi tầng, code được chia theo tính năng:
 src/main/java/com/diagramio/
 ├── api/             auth, user, diagram, version, share (mỗi phần có controller và dto/), dto/ dùng chung
 ├── domain/          auth, user, diagram, version, share, access (Caller, ShareRole), exception
-├── infrastructure/  auth, user, diagram, version, share (entity, JpaRepository, RepositoryAdapter), security
-└── config/          AuthConfig, DiagramConfig, DiagramVersionConfig, ShareConfig, SecurityConfig, OpenApiConfig
-src/main/resources/db/migration/   V1__create_tables.sql, V2__seed_sample_user.sql, V3__create_refresh_tokens.sql
+├── infrastructure/  auth, user, share (entity, JpaRepository, RepositoryAdapter), diagram, version (adapter SQL),
+│                    cache (decorator cache hai tầng), security
+└── config/          AuthConfig, DiagramConfig, DiagramVersionConfig, ShareConfig, CacheConfig, SecurityConfig, OpenApiConfig
+src/main/resources/db/migration/   V1__create_tables.sql, V2__seed_sample_user.sql, V3__create_refresh_tokens.sql,
+                                   V4__phase2_indexes.sql
 ```
 
 Một số điểm thiết kế chính:
@@ -63,9 +66,10 @@ Một số điểm thiết kế chính:
 - Xác thực nằm trong hai filter thay vì lặp lại ở từng endpoint. Filter JWT đọc `Authorization: Bearer <token>`, filter thứ hai đọc `X-Share-Token` của link chia sẻ. Hai filter không tự chặn request; việc trả 401 do `SecurityConfig` quyết định.
 - Thông tin người gọi được gom vào `Caller` (người dùng đăng nhập và/hoặc link chia sẻ). Mọi luật quyền nằm trong `Caller` với bốn hàm `canView`, `canViewHistory`, `canEdit`, `canManage`, nên service không cần biết người gọi đến bằng cách nào. Controller không tự đọc thông tin xác thực mà nhận sẵn tham số `Caller` (khách nếu không đăng nhập, không có link) hoặc `@CurrentUser UUID` (endpoint cần tài khoản, thiếu thì 401).
 - Transaction được truyền vào domain qua interface `TransactionRunner`; tầng infrastructure cài đặt bằng `TransactionTemplate`. Nhờ vậy service vẫn là Java thuần mà vẫn bọc được nhiều bước trong một transaction (làm mới token, lưu và khôi phục phiên bản). Khi nào cần transaction được ghi thành quy tắc trong `AGENTS.md`.
-- Quyền trên sơ đồ được kiểm tra ở một chỗ: `DiagramAccess.require(id, caller, Permission)` trả 404, 401 hoặc 403 thống nhất cho mọi module.
+- Quyền trên sơ đồ được kiểm tra ở một chỗ: `DiagramAccess` trả 404, 401 hoặc 403 thống nhất cho mọi module. `require` chỉ đọc chủ, cờ công khai và version (không đọc `data`), `requireLocked` thêm khóa dòng cho lưu và khôi phục phiên bản, `requireDiagram` đọc cả sơ đồ khi response trả nội dung (pha 2, [ADR-0002](docs/adr/0002-toi-uu-truy-cap-du-lieu.md)).
 - Dữ liệu sơ đồ là kiểu `DiagramData` (kiểm tra cấu trúc và 2 MB khi tạo từ request), loại sơ đồ là enum `DiagramType`. `Diagram` tách metadata (`updateMetadata`) khỏi nội dung (`replaceContent`); mọi thay đổi nội dung, kể cả khôi phục phiên bản, đi qua `replaceContent`. Đây là chỗ nối cho pha 2 (sửa theo thao tác, sự kiện, cache).
-- Chống ghi đè khi nhiều người cùng sửa bằng optimistic locking (`@Version`). Lưu và khôi phục phiên bản khóa dòng sơ đồ (`SELECT ... FOR UPDATE`) để các yêu cầu đồng thời xếp hàng.
+- Chống ghi đè khi nhiều người cùng sửa bằng optimistic locking: sửa sơ đồ là một câu `UPDATE ... WHERE version = :expected`, không khớp thì 409. Lưu và khôi phục phiên bản khóa dòng sơ đồ (`SELECT ... FOR UPDATE`) để các yêu cầu đồng thời xếp hàng, và chép `data` ngay trong CSDL.
+- Đường đọc có cache hai tầng ([ADR-0003](docs/adr/0003-cache-hai-tang-etag.md)): decorator của repository, ghi CSDL rồi ghi trạng thái mới vào cache sau commit, chỉ khi version mới hơn; chế độ chọn bằng `DIAGRAMIO_CACHE_MODE` (`none`, `local` mặc định, `redis`, `two-level` khi chạy nhiều bản). `GET` sơ đồ trả `ETag`, client gửi lại trong `If-None-Match` thì nhận 304 (sau khi đã kiểm tra quyền).
 - Schema CSDL do Flyway quản lý, Hibernate chỉ kiểm tra schema khớp với entity (`ddl-auto: validate`). CSDL gồm năm bảng: `users`, `refresh_tokens`, `diagrams`, `diagram_versions`, `diagram_shares`.
 
 ## 4. Đặc tả API
@@ -133,7 +137,7 @@ Chạy toàn bộ bằng Docker:
 
 ```bash
 cp .env.example .env            # đổi mật khẩu, JWT_SECRET, cổng nếu cần
-docker compose up -d --build    # build image app, chạy PostgreSQL và app
+docker compose up -d --build    # build image app, chạy PostgreSQL, Redis và app
 ```
 
 App chạy ở `http://localhost:8080` (đổi bằng `APP_PORT`). Flyway tự tạo bảng và tài khoản mẫu `uet@gmail.com` / `uet123456` ở lần chạy đầu. Container app có healthcheck gọi `/api/v1/health`.
@@ -150,6 +154,8 @@ Số liệu cho việc đo hiệu năng (Spring Boot Actuator) nằm trên cổn
 | `POSTGRES_PORT`, `APP_PORT` | Cổng mở ra máy cho CSDL và app |
 | `SPRING_DATASOURCE_*` | Kết nối CSDL khi chạy app từ IDE |
 | `JWT_SECRET` | Khóa ký JWT, ít nhất 32 ký tự; bắt buộc đổi khi triển khai thật |
+| `DIAGRAMIO_CACHE_MODE` | Cache sơ đồ: `none`, `local` (mặc định, không cần Redis), `redis`, `two-level` (Caffeine + Redis, khi chạy nhiều bản) |
+| `REDIS_PORT` | Cổng mở ra máy cho Redis (chỉ dùng ở chế độ `redis`, `two-level`) |
 
 Thử nhanh bằng `curl`:
 
@@ -164,9 +170,10 @@ Một số việc thường làm khác:
 
 - Chạy test: `./mvnw test` (cần Docker đang chạy). Có ba nhóm test:
   - Unit test và test controller (MockMvc): chạy được ở mọi máy.
-  - Test CSDL trong `infrastructure` (Testcontainers): không có Docker thì tự bỏ qua.
+  - Test CSDL và Redis trong `infrastructure` (Testcontainers): không có Docker thì tự bỏ qua. `RedisDiagramCacheTest` thử cả trường hợp Redis bị treo giữa chừng (`docker pause`).
   - Test E2E hộp đen trong `src/test/java/com/diagramio/e2e`: khởi động cả app trên cổng ngẫu nhiên với PostgreSQL thật và chỉ gọi API qua HTTP, kiểm tra mọi endpoint với từng vai trò (chủ, link edit, link view, người khác, khách). Nhóm này cố ý báo lỗi khi không có Docker để không "xanh giả". Chạy riêng: `./mvnw test -Dtest='com.diagramio.e2e.**'`; bỏ qua: `./mvnw test -Dtest='!com.diagramio.e2e.**'`.
-  - `SqlPerRequestE2eTest` (trong nhóm E2E) đếm câu SQL, transaction và số lần chở `data` của từng endpoint, ghi bảng ra `target/bench/sql-per-request.md`; thay đổi làm đổi các con số này thì sửa con số trong test cùng PR.
+  - `SqlPerRequestE2eTest` (trong nhóm E2E) đếm câu SQL, transaction và số lần chở `data` của từng endpoint, ghi bảng ra `target/bench/sql-per-request.md`; thay đổi làm đổi các con số này thì sửa con số trong test cùng PR. Test này chạy với `diagramio.cache.mode=none` (đo truy cập CSDL, không đo cache).
+  - `CacheE2eTest` kiểm tra ETag, 304 và cache ở chế độ mặc định; `TwoInstanceCacheE2eTest` chạy hai bản app thật dùng chung PostgreSQL và Redis ở chế độ `two-level`.
   - Dùng JDK mới hơn 21 (ví dụ 25) thì thêm `-DargLine="-Dnet.bytebuddy.experimental=true"` để Mockito chạy được.
 - Xuất lại đặc tả API sau khi đổi endpoint (app đang chạy): `curl -o docs/openapi.yaml http://localhost:8080/v3/api-docs.yaml`. Khóa được sắp xếp cố định và server là URL tương đối, nên file chỉ thay đổi khi API thay đổi; diff khác rỗng nghĩa là phải commit lại file này.
 - Thay đổi CSDL: thêm file migration mới dạng `V<số>__mo_ta.sql` (hai dấu gạch dưới) trong `src/main/resources/db/migration`, không sửa các file đã có.
@@ -252,6 +259,8 @@ Toàn bộ hệ thống gồm ứng dụng Spring Boot (Java 21), CSDL PostgreSQ
 
 ## 7. Hướng cải tiến cho pha 2
 
+> Kế hoạch chi tiết: [docs/ke-hoach-pha-2.md](docs/ke-hoach-pha-2.md). Đã làm: M0 (phép đo, [ADR-0001](docs/adr/0001-phuong-phap-do.md)), B1 (truy cập dữ liệu, [ADR-0002](docs/adr/0002-toi-uu-truy-cap-du-lieu.md)), B2 (cache hai tầng, ETag/304, [ADR-0003](docs/adr/0003-cache-hai-tang-etag.md)). Bảng dưới là phân tích ban đầu của pha 1.
+
 Baseline cố ý chưa tối ưu. Các hướng dưới đây đều đo được trước và sau bằng cùng kịch bản ở mục 6.
 
 | Thuộc tính | Hiện trạng | Hướng cải tiến |
@@ -269,3 +278,4 @@ Baseline cố ý chưa tối ưu. Các hướng dưới đây đều đo đượ
 
 - [docs/openapi.yaml](docs/openapi.yaml): đặc tả API dạng OpenAPI 3.1. Xem trực quan bằng cách mở file trong [Swagger Editor](https://editor.swagger.io) (File, Import file) hoặc extension OpenAPI của VS Code.
 - [docs/luong-nghiep-vu.md](docs/luong-nghiep-vu.md): flowchart các luồng xác thực, phân quyền, cập nhật sơ đồ, phiên bản và chia sẻ.
+- [docs/ke-hoach-pha-2.md](docs/ke-hoach-pha-2.md) và các ADR trong [docs/adr/](docs/adr/): kế hoạch pha 2 và lý do của từng quyết định kiến trúc.

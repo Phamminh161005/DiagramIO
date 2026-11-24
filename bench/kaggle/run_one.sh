@@ -10,6 +10,8 @@
 #   --profile   lấy flame graph CPU (async-profiler) PROFILE_SECONDS giây ở giữa pha đo; lần chạy này
 #               bị nhiễu bởi profiler nên báo cáo không gộp nó vào số liệu độ trễ
 #
+# APP_ARGS (biến môi trường): tham số thêm cho app của cấu hình này, ví dụ --diagramio.cache.mode=two-level
+#
 # Kết quả ở <phiên>/<config>_<workload>_<mode><level>_r<rep>/: meta.json, k6-summary.json, procstat.csv,
 # prom.csv, pg_*.csv; log thô (app.log, gc.log, k6.log) không commit.
 set -euo pipefail
@@ -81,7 +83,8 @@ if [ "$profile" = 1 ]; then
   # Thông tin gỡ lỗi giữa các safepoint, để flame graph không bị lệch về điểm safepoint
   JVM_OPTS="$JVM_OPTS -XX:+UnlockDiagnosticVMOptions -XX:+DebugNonSafepoints"
 fi
-start_app "$jar" "$DB_RUN" "$run_dir"
+# shellcheck disable=SC2086 # APP_ARGS cố ý được tách thành nhiều tham số
+start_app "$jar" "$DB_RUN" "$run_dir" ${APP_ARGS:-}
 
 taskset -c "$LOADGEN_CPUS" "$PYTHON" "$BENCH_DIR/collect/procstat.py" --out "$run_dir/procstat.csv" &
 PROC_PID=$!
@@ -147,7 +150,7 @@ META_RUN="$run" META_CONFIG="$config" META_WORKLOAD="$workload" META_MODE="$mode
 META_REP="$rep" META_PROFILE="$profile" META_STARTED="$started_at" META_ENDED="$ended_at" META_K6_EXIT="$k6_exit" \
 META_STATUS="$status" META_SHA="$(cat "$(dirname "$jar")/git-sha" 2>/dev/null || echo unknown)" \
 META_JVM="$JVM_OPTS" META_SUT="$SUT_CPUS" META_LOADGEN="$LOADGEN_CPUS" META_WARMUP="$WARMUP" META_MEASURE="$MEASURE" \
-META_K6_ENV="${k6_env[*]}" META_MANIFEST="$DATASET_DIR/manifest.json" \
+META_K6_ENV="${k6_env[*]}" META_APP_ARGS="${APP_ARGS:-}" META_MANIFEST="$DATASET_DIR/manifest.json" \
 "$PYTHON" - "$run_dir/meta.json" << 'EOF'
 import hashlib, json, os, sys
 e = os.environ
@@ -158,7 +161,7 @@ meta = {
     "status": e["META_STATUS"], "k6_exit": int(e["META_K6_EXIT"]), "started_at": e["META_STARTED"],
     "ended_at": e["META_ENDED"], "warmup_s": int(e["META_WARMUP"]), "measure_s": int(e["META_MEASURE"]),
     "jvm_opts": e["META_JVM"], "sut_cpus": e["META_SUT"], "loadgen_cpus": e["META_LOADGEN"],
-    "k6_args": e["META_K6_ENV"],
+    "k6_args": e["META_K6_ENV"], "app_args": e["META_APP_ARGS"],
     "dataset_manifest_sha256": hashlib.sha256(open(manifest, "rb").read()).hexdigest() if os.path.exists(manifest) else None,
 }
 with open(sys.argv[1], "w") as f:

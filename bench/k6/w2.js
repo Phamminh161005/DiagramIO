@@ -53,18 +53,24 @@ const buckets = new SharedArray(`buckets:${SIZE_CLASS}:${PARTITIONS}`, () => {
   for (let p = 0; p < PARTITIONS; p++) {
     result.push({ d: [], h: [] });
   }
+  // Sơ đồ có lịch sử được chia đều trước (để phân vùng nào cũng có thứ để khôi phục), rồi tới các sơ đồ còn lại
   const partitionOf = {};
-  for (let i = 0; i < ds.length; i++) {
-    result[i % PARTITIONS].d.push(i);
-    partitionOf[ds[i].id] = i % PARTITIONS;
-  }
   for (let i = 0; i < hs.length; i++) {
-    result[partitionOf[hs[i].id]].h.push(i);
+    partitionOf[hs[i].id] = i % PARTITIONS;
+    result[i % PARTITIONS].h.push(i);
+  }
+  let next = 0;
+  for (let i = 0; i < ds.length; i++) {
+    if (!(ds[i].id in partitionOf)) {
+      partitionOf[ds[i].id] = next++ % PARTITIONS;
+    }
+    result[partitionOf[ds[i].id]].d.push(i);
   }
   return result;
 });
 
-const conflicts = new Counter('write_conflicts');
+const conflicts = new Counter('write_conflicts');      // 409 ngoài dự kiến: lỗi của bộ đo
+const resyncs = new Counter('write_resyncs');          // đọc lại version sau một lần ghi không rõ kết quả
 const fallbacks = new Counter('op_fallbacks');
 
 export const options = buildOptions(OPS);
@@ -73,6 +79,10 @@ export function setup() {
   if (PARTITIONS < MAX_VUS) {
     console.warn(`chỉ có ${PARTITIONS} sơ đồ để ghi cho tới ${MAX_VUS} VU: VU có thể dùng chung phân vùng và `
       + 'gây 409 giả tạo (write_conflicts); giảm MAX_VUS hoặc tăng SCALE');
+  }
+  if (history.length < PARTITIONS) {
+    console.warn(`chỉ có ${history.length} sơ đồ có lịch sử cho ${PARTITIONS} phân vùng: một số VU không có gì `
+      + 'để khôi phục (op_fallbacks); giảm MAX_VUS');
   }
   const list = [];
   for (let i = 0; i < users.length; i++) {
@@ -87,6 +97,9 @@ const lockVersions = {};   // id sơ đồ -> version hiện tại (chỉ các s
 let etags = {};            // id sơ đồ -> ETag của lần mở trước
 let etagCount = 0;
 let nonce = 0;
+// Sơ đồ có lần ghi không nhận được phản hồi (timeout, lỗi 5xx): không biết server đã ghi hay chưa, nên phải đọc
+// lại version trước lần ghi kế tiếp, thay vì gửi version cũ rồi nhận 409
+const uncertain = {};
 
 function myBucket() {
   if (bucket === null) {
@@ -114,10 +127,30 @@ function rememberEtag(id, etag) {
 }
 
 function resync(id, ownerIndex, data) {
-  conflicts.add(1);
   const res = call('GET', '/diagrams/<id>', `/diagrams/${id}`, { op: 'resync', token: data.tokens[ownerIndex], readBody: true });
   if (res.status === 200) {
     lockVersions[id] = res.json('version');
+    delete uncertain[id];
+  }
+}
+
+/** Trước khi ghi: nếu lần ghi trước của sơ đồ này không rõ kết quả thì đọc lại version. */
+function settle(id, ownerIndex, data) {
+  if (uncertain[id]) {
+    resyncs.add(1);
+    resync(id, ownerIndex, data);
+  }
+}
+
+/** Sau khi ghi một thao tác làm tăng version: 200 thì +1, 409 là lỗi bộ đo, không có phản hồi thì chưa chắc. */
+function afterVersionedWrite(res, id, ownerIndex, data) {
+  if (res.status === 200) {
+    lockVersions[id]++;
+  } else if (res.status === 409) {
+    conflicts.add(1);
+    resync(id, ownerIndex, data);
+  } else if (res.status === 0 || res.status >= 500) {
+    uncertain[id] = true;
   }
 }
 
@@ -198,17 +231,14 @@ const OPERATIONS = {
       return fallback(data);
     }
     const d = diagrams[b.d[zipfIndex(b.d.length)]];
+    settle(d.id, d.o, data);
     const content = uniform(templates[d.c]).replace('"__NONCE__"', JSON.stringify(`bench-${exec.vu.idInTest}-${nonce++}`));
     const res = call('PUT', '/diagrams/<id>', `/diagrams/${d.id}`, {
       op: 'put', token: data.tokens[d.o],
       body: `{"title":${JSON.stringify(d.t)},"diagramType":"${d.ty}","version":${versionOf(d)},`
         + `"isPublic":${d.p},"data":${content}}`,
     });
-    if (res.status === 200) {
-      lockVersions[d.id]++;
-    } else if (res.status === 409) {
-      resync(d.id, d.o, data);
-    }
+    afterVersionedWrite(res, d.id, d.o, data);
   },
   snapshot(data) {
     const b = myBucket();
@@ -227,12 +257,11 @@ const OPERATIONS = {
     }
     const h = history[b.h[zipfIndex(b.h.length)]];
     versionOf(h);
+    settle(h.id, h.o, data);
     const res = call('POST', '/diagrams/<id>/versions/<vid>/restore', `/diagrams/${h.id}/versions/${h.r}/restore`, {
       op: 'restore', token: data.tokens[h.o],
     });
-    if (res.status === 200) {
-      lockVersions[h.id]++;
-    }
+    afterVersionedWrite(res, h.id, h.o, data);
   },
   share_create(data) {
     const b = myBucket();

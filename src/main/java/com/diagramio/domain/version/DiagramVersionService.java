@@ -5,6 +5,7 @@ import com.diagramio.domain.access.Caller;
 import com.diagramio.domain.access.DiagramAccess;
 import com.diagramio.domain.access.Permission;
 import com.diagramio.domain.diagram.Diagram;
+import com.diagramio.domain.diagram.DiagramAccessInfo;
 import com.diagramio.domain.diagram.DiagramRepository;
 import com.diagramio.domain.exception.InvalidInputException;
 import com.diagramio.domain.exception.NotFoundException;
@@ -18,6 +19,7 @@ import java.util.UUID;
  * Lưu phiên bản (snapshot) và khôi phục sơ đồ về một phiên bản cũ.
  * Lưu/khôi phục khóa dòng sơ đồ trước khi đọc, nên các yêu cầu đồng thời được xếp hàng
  * và xử lý lần lượt: số thứ tự phiên bản tăng tuyến tính, snapshot luôn chụp trạng thái mới nhất.
+ * Data được chép ngay trong CSDL (bảng sơ đồ sang bảng phiên bản và ngược lại), không đi qua app.
  */
 public class DiagramVersionService {
 
@@ -40,14 +42,15 @@ public class DiagramVersionService {
         this.clock = clock;
     }
 
-    public List<DiagramVersion> listVersions(UUID diagramId, Caller caller) {
+    public List<DiagramVersionSummary> listVersions(UUID diagramId, Caller caller) {
         access.require(diagramId, caller, Permission.VIEW_HISTORY);
-        return versionRepository.findByDiagramId(diagramId);
+        return versionRepository.findSummaries(diagramId);
     }
 
     public DiagramVersion getVersion(UUID diagramId, UUID versionId, Caller caller) {
         access.require(diagramId, caller, Permission.VIEW_HISTORY);
-        return findVersion(diagramId, versionId);
+        return versionRepository.findByIdAndDiagramId(versionId, diagramId)
+                .orElseThrow(() -> versionNotFound(versionId));
     }
 
     /**
@@ -60,45 +63,35 @@ public class DiagramVersionService {
             throw new InvalidInputException("note must not exceed " + MAX_NOTE_LENGTH + " characters");
         }
         return transactionRunner.inTransaction(() -> {
-            versionRepository.lockDiagram(diagramId);
-            Diagram diagram = access.require(diagramId, caller, Permission.EDIT);
-            if (expectedVersion != null && !expectedVersion.equals(diagram.getVersion())) {
-                throw new OptimisticLockConflictException(diagramId, expectedVersion, diagram.getVersion());
+            DiagramAccessInfo diagram = access.requireLocked(diagramId, caller, Permission.EDIT);
+            if (expectedVersion != null && expectedVersion != diagram.version()) {
+                throw new OptimisticLockConflictException(diagramId, expectedVersion, diagram.version());
             }
-            return snapshot(diagram, note, caller);
+            return versionRepository.snapshot(UUID.randomUUID(), diagramId, note, caller.userId(), Instant.now(clock));
         });
     }
 
     /**
      * Sao lưu trạng thái hiện tại thành một snapshot, rồi chép dữ liệu của phiên bản được chọn
-     * vào sơ đồ. Cả hai bước nằm trong cùng một transaction. Version của sơ đồ được tầng
-     * persistence (@Version) kiểm tra và tăng lên 1, giống luồng cập nhật sơ đồ.
+     * vào sơ đồ. Cả hai bước nằm trong cùng một transaction, sau khi đã khóa dòng sơ đồ;
+     * version của sơ đồ tăng thêm 1, giống luồng cập nhật sơ đồ.
      */
     public RestoreResult restore(UUID diagramId, UUID versionId, Caller caller) {
         return transactionRunner.inTransaction(() -> {
-            versionRepository.lockDiagram(diagramId);
-            Diagram diagram = access.require(diagramId, caller, Permission.EDIT);
-            DiagramVersion target = findVersion(diagramId, versionId);
+            access.requireLocked(diagramId, caller, Permission.EDIT);
+            DiagramVersionSummary target = versionRepository.findSummary(versionId, diagramId)
+                    .orElseThrow(() -> versionNotFound(versionId));
 
-            DiagramVersion backup = snapshot(diagram,
-                    "Auto backup before restoring version " + target.versionNumber(), caller);
-
-            diagram.replaceContent(target.data(), caller.userId(), Instant.now(clock));
-            Diagram restored = diagramRepository.save(diagram);
+            Instant now = Instant.now(clock);
+            DiagramVersionSummary backup = versionRepository.snapshotSummary(UUID.randomUUID(), diagramId,
+                    "Auto backup before restoring version " + target.versionNumber(), caller.userId(), now);
+            Diagram restored = diagramRepository.restoreContent(diagramId, versionId, caller.userId(), now)
+                    .orElseThrow(() -> versionNotFound(versionId));
             return new RestoreResult(restored, backup);
         });
     }
 
-    private DiagramVersion snapshot(Diagram diagram, String note, Caller caller) {
-        int nextNumber = versionRepository.maxVersionNumber(diagram.getId()) + 1;
-        DiagramVersion version = new DiagramVersion(UUID.randomUUID(), diagram.getId(), nextNumber,
-                diagram.getData(), note, caller.userId(), Instant.now(clock));
-        return versionRepository.save(version);
+    private static NotFoundException versionNotFound(UUID versionId) {
+        return new NotFoundException("Version not found: " + versionId);
     }
-
-    private DiagramVersion findVersion(UUID diagramId, UUID versionId) {
-        return versionRepository.findByIdAndDiagramId(versionId, diagramId)
-                .orElseThrow(() -> new NotFoundException("Version not found: " + versionId));
-    }
-
 }

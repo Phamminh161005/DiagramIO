@@ -3,10 +3,10 @@ package com.diagramio.domain.diagram;
 import com.diagramio.domain.access.Caller;
 import com.diagramio.domain.access.DiagramAccess;
 import com.diagramio.domain.access.Permission;
+import com.diagramio.domain.exception.DiagramNotFoundException;
 import com.diagramio.domain.exception.InvalidInputException;
 import com.diagramio.domain.exception.OptimisticLockConflictException;
 import java.time.Instant;
-import java.util.List;
 import java.util.UUID;
 
 /** Domain rules for diagram management. This class intentionally has no framework dependency. */
@@ -36,34 +36,41 @@ public class DiagramService {
         diagram.setPublic(false);
         diagram.setCreatedAt(now);
         diagram.setUpdatedAt(now);
-        return repository.save(diagram);
+        return repository.insert(diagram);
     }
 
     /**
      * Owner hoặc người cầm link edit được sửa. Chỉ owner được đổi trạng thái công khai;
      * người sửa qua link gửi isPublic khác thì giữ nguyên giá trị cũ.
      * updatedBy là người đăng nhập, NULL nếu sửa qua link mà không đăng nhập.
+     *
+     * <p>Kiểm tra quyền chỉ đọc 4 cột (không đọc data), rồi ghi bằng một câu UPDATE có điều kiện version: không cần
+     * transaction, vì người khác ghi chen vào giữa thì version đã đổi và câu UPDATE không sửa gì (409).
      */
     public Diagram updateDiagram(UUID id, String title, DiagramType diagramType, DiagramData data,
                                  boolean isPublic, Caller caller, Integer requestVersion) {
         if (id == null) {
             throw new InvalidInputException("Diagram id is required");
         }
-        Diagram current = access.require(id, caller, Permission.EDIT);
-        checkVersion(id, requestVersion, current.getVersion());
+        DiagramAccessInfo current = access.require(id, caller, Permission.EDIT);
+        checkVersion(id, requestVersion, current.version());
         requireType(diagramType);
         if (data == null) {
             throw new InvalidInputException("data must be valid JSON");
         }
 
+        Diagram diagram = new Diagram(current.id(), null, null, null, current.version(), current.isPublic(),
+                current.ownerId(), null, null, null);
         Instant now = Instant.now();
-        current.updateMetadata(title, diagramType, caller.userId(), now);
-        current.replaceContent(data, caller.userId(), now);
+        diagram.updateMetadata(title, diagramType, caller.userId(), now);
+        diagram.replaceContent(data, caller.userId(), now);
         // Chỉ owner đổi được trạng thái công khai; người sửa qua link gửi giá trị khác thì bỏ qua
         if (Permission.MANAGE.isGrantedTo(caller, current)) {
-            current.setPublic(isPublic);
+            diagram.setPublic(isPublic);
         }
-        return repository.save(current);
+        return repository.updateIfVersion(diagram).orElseThrow(() -> new OptimisticLockConflictException(id,
+                requestVersion, repository.findAccessInfo(id).map(DiagramAccessInfo::version)
+                        .orElseThrow(() -> new DiagramNotFoundException("Diagram not found: " + id))));
     }
 
     public void deleteDiagram(UUID id, Caller caller) {
@@ -72,31 +79,32 @@ public class DiagramService {
     }
 
     public Diagram getDiagramById(UUID id, Caller caller) {
+        return access.requireDiagram(id, caller, Permission.VIEW);
+    }
+
+    /**
+     * Kiểm tra quyền xem như {@link #getDiagramById} nhưng không đọc data; trả version hiện tại. Dùng cho GET có
+     * điều kiện: client đã có bản đúng version này thì không cần gửi lại nội dung. Người không có quyền vẫn nhận
+     * 401/403/404 như khi GET bình thường, nên không dò được version của sơ đồ riêng tư.
+     */
+    public DiagramAccessInfo getAccessInfo(UUID id, Caller caller) {
         return access.require(id, caller, Permission.VIEW);
     }
 
-    /** diagramType null = mọi loại. */
-    public List<Diagram> getDiagramsByOwner(UUID ownerId, DiagramType diagramType, String title,
-                                            int page, int size) {
+    /** Sơ đồ của tôi, mới sửa trước. diagramType null = mọi loại; title rỗng = không tìm theo tên. */
+    public DiagramPage listMine(UUID ownerId, DiagramType diagramType, String title, int page, int size) {
         validatePage(page, size);
-        return repository.findByOwnerId(ownerId, diagramType, normalizeFilter(title), page, size);
+        return repository.findByOwner(ownerId, diagramType, normalizeFilter(title), page, size);
     }
 
-    public long countDiagramsByOwner(UUID ownerId, DiagramType diagramType, String title) {
-        return repository.countByOwnerId(ownerId, diagramType, normalizeFilter(title));
-    }
-
-    public List<Diagram> getPublicDiagrams(int page, int size) {
+    /** Sơ đồ công khai, mới sửa trước. */
+    public DiagramPage listPublic(int page, int size) {
         validatePage(page, size);
-        return repository.findPublicDiagrams(page, size);
+        return repository.findPublic(page, size);
     }
 
-    public long countPublicDiagrams() {
-        return repository.countPublicDiagrams();
-    }
-
-    private void checkVersion(UUID id, Integer requestedVersion, Integer currentVersion) {
-        if (requestedVersion == null || currentVersion == null || !requestedVersion.equals(currentVersion)) {
+    private void checkVersion(UUID id, Integer requestedVersion, int currentVersion) {
+        if (requestedVersion == null || requestedVersion != currentVersion) {
             throw new OptimisticLockConflictException(id, requestedVersion, currentVersion);
         }
     }
@@ -116,5 +124,4 @@ public class DiagramService {
     private String normalizeFilter(String value) {
         return value == null || value.isBlank() ? "" : value.trim();
     }
-
 }

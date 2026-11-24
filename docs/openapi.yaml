@@ -157,7 +157,8 @@ paths:
   /api/v1/diagrams:
     get:
       description: "Lọc theo loại (UML/ERD), tìm theo tên, phân trang (size tối đ\
-        a 100)."
+        a 100). Sắp xếp: mới sửa trước (updatedAt giảm dần), cùng thời điểm thì theo\
+        \ id, nên thứ tự giữa các trang ổn định."
       operationId: getMyDiagrams
       parameters:
       - description: Tìm theo tên (không phân biệt hoa thường)
@@ -246,7 +247,8 @@ paths:
       - Diagrams
   /api/v1/diagrams/public:
     get:
-      description: Không cần đăng nhập.
+      description: "Không cần đăng nhập. Sắp xếp: mới sửa trước (updatedAt giảm dầ\
+        n), rồi theo id."
       operationId: getPublicDiagrams
       parameters:
       - in: query
@@ -331,7 +333,10 @@ paths:
       - Diagrams
     get:
       description: "Sơ đồ công khai: ai cũng xem được. Riêng tư: owner hoặc người\
-        \ có link chia sẻ (view/edit)."
+        \ có link chia sẻ (view/edit). Response có ETag W/\"<version>\"; gửi lại ETag\
+        \ đó trong If-None-Match thì nhận 304 không kèm nội dung nếu sơ đồ chưa đổ\
+        i. Quyền xem luôn được kiểm tra trước, nên người không có quyền vẫn nhận 401/403/404\
+        \ chứ không bao giờ nhận 304."
       operationId: getById
       parameters:
       - in: path
@@ -340,6 +345,12 @@ paths:
         schema:
           type: string
           format: uuid
+      - description: "ETag của bản client đang có, ví dụ W/\"3\""
+        in: header
+        name: If-None-Match
+        required: false
+        schema:
+          type: string
       responses:
         "200":
           content:
@@ -347,6 +358,20 @@ paths:
               schema:
                 $ref: "#/components/schemas/DiagramResponse"
           description: Chi tiết sơ đồ
+          headers:
+            Cache-Control:
+              description: "no-cache, private"
+              schema:
+                type: string
+              style: simple
+            ETag:
+              description: W/"<version>"
+              schema:
+                type: string
+              style: simple
+        "304":
+          description: Sơ đồ chưa đổi so với ETag trong If-None-Match (không có nội
+            dung)
         "400":
           content:
             '*/*':
@@ -398,7 +423,13 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/DiagramResponse"
-          description: "Đã cập nhật, version tăng 1"
+          description: "Đã cập nhật, version tăng 1; ETag là của version mới"
+          headers:
+            ETag:
+              description: W/"<version>"
+              schema:
+                type: string
+              style: simple
         "400":
           content:
             '*/*':
@@ -750,7 +781,14 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/DiagramVersionResponse"
-          description: Chi tiết phiên bản
+          description: "Chi tiết phiên bản. Phiên bản là snapshot bất biến nên client\
+            \ được giữ mãi (Cache-Control: private, max-age=31536000, immutable)"
+          headers:
+            Cache-Control:
+              description: "max-age=31536000, private, immutable"
+              schema:
+                type: string
+              style: simple
         "401":
           content:
             '*/*':
@@ -850,13 +888,20 @@ paths:
       - System
   /api/v1/shares/{token}:
     get:
-      description: Ai có token hợp lệ đều có thể xem cấu trúc sơ đồ và quyền tương
-        ứng (view/edit).
+      description: "Ai có token hợp lệ đều có thể xem cấu trúc sơ đồ và quyền tươ\
+        ng ứng (view/edit). ETag W/\"<version>-<role>\" đổi khi sơ đồ đổi hoặc quyề\
+        n của link đổi; link đã thu hồi luôn trả 404, kể cả khi gửi If-None-Match."
       operationId: getSharedDiagram
       parameters:
       - in: path
         name: token
         required: true
+        schema:
+          type: string
+      - description: "ETag của bản client đang có, ví dụ W/\"3-view\""
+        in: header
+        name: If-None-Match
+        required: false
         schema:
           type: string
       responses:
@@ -866,6 +911,14 @@ paths:
               schema:
                 $ref: "#/components/schemas/SharedDiagramResponse"
           description: Sơ đồ và quyền của token (view/edit)
+          headers:
+            ETag:
+              description: W/"<version>-<role>"
+              schema:
+                type: string
+              style: simple
+        "304":
+          description: Sơ đồ và quyền của link chưa đổi so với If-None-Match
         "404":
           content:
             '*/*':

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Lấy mẫu CPU và bộ nhớ theo nhóm tiến trình, mỗi --interval giây, đọc thẳng /proc (Linux).
 
-Nhóm: app (java chạy app.jar), db (postgres, gồm mọi backend), loadgen (k6), collector (script đo này),
-other. Ghi thêm CPU toàn máy (user, system, iowait, steal...) và độ bận từng CPU, để kiểm tra bố trí CPU
+Nhóm: app (java chạy app.jar), db (postgres, gồm mọi backend), cache (redis-server), loadgen (k6),
+collector (script đo này), other. Ghi thêm CPU toàn máy (user, system, iowait, steal...) và độ bận từng CPU, để kiểm tra bố trí CPU
 và phát hiện máy ảo bị chiếm CPU (steal). Chạy tới khi nhận SIGTERM/SIGINT.
 
 CSV dạng dài: ts,metric,key,value
@@ -37,6 +37,8 @@ def classify(pid: str, comm: str) -> str:
         return "db"
     if comm == "k6":
         return "loadgen"
+    if comm.startswith("redis-server"):
+        return "cache"
     if comm.startswith("java"):
         try:
             with open(f"/proc/{pid}/cmdline", "rb") as f:

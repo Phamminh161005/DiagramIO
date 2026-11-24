@@ -22,6 +22,7 @@ import org.springframework.beans.factory.config.BeanPostProcessor;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
+import org.springframework.test.context.TestPropertySource;
 
 /**
  * Số câu SQL, transaction, dòng và byte giữa app và CSDL của từng endpoint (M0 trong docs/ke-hoach-pha-2.md).
@@ -32,10 +33,14 @@ import org.springframework.context.annotation.Import;
  * làm đổi số câu lệnh (ví dụ B1) thì sửa con số trong cùng PR, để diff cho thấy đúng thay đổi; con số tăng
  * ngoài dự kiến (ví dụ lỗi N+1) sẽ làm test đỏ.
  *
+ * <p>Chạy với {@code diagramio.cache.mode=none}: bảng này đo truy cập CSDL của từng endpoint (B1); hiệu quả của
+ * cache (B2) được đo bằng tỉ lệ trúng cache trên Kaggle và kiểm tra hành vi ở {@code CacheE2eTest}.
+ *
  * <p>Dùng chung container PostgreSQL với các test E2E khác nhưng chạy một context riêng (DataSource được bọc để
  * ghi lưu lượng). Request được gửi lần lượt nên mọi câu lệnh ghi được giữa hai mốc thuộc về đúng một request.
  */
 @Import(SqlPerRequestE2eTest.RecordJdbcTraffic.class)
+@TestPropertySource(properties = "diagramio.cache.mode=none")
 class SqlPerRequestE2eTest extends E2eTestBase {
 
     /** Kích thước data của sơ đồ dùng để đo (JSON gọn), cỡ một sơ đồ ERD vừa. */

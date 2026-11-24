@@ -157,7 +157,8 @@ paths:
   /api/v1/diagrams:
     get:
       description: "Lọc theo loại (UML/ERD), tìm theo tên, phân trang (size tối đ\
-        a 100)."
+        a 100). Sắp xếp: mới sửa trước (updatedAt giảm dần), cùng thời điểm thì theo\
+        \ id, nên thứ tự giữa các trang ổn định."
       operationId: getMyDiagrams
       parameters:
       - description: Tìm theo tên (không phân biệt hoa thường)
@@ -246,7 +247,8 @@ paths:
       - Diagrams
   /api/v1/diagrams/public:
     get:
-      description: Không cần đăng nhập.
+      description: "Không cần đăng nhập. Sắp xếp: mới sửa trước (updatedAt giảm dầ\
+        n), rồi theo id."
       operationId: getPublicDiagrams
       parameters:
       - in: query

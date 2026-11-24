@@ -21,7 +21,7 @@
 |---|---|---|
 | API | `com.diagramio.api` | Spring Web: controllers, DTOs, `@RestControllerAdvice` that maps domain exceptions to HTTP status codes |
 | Business | `com.diagramio.domain` | Plain Java only: domain models, services, repository interfaces, domain exceptions |
-| Data access | `com.diagramio.infrastructure` | Spring Data JPA: `@Entity`, `JpaRepository`, classes implementing the domain repository interfaces, Entity <-> domain mappers |
+| Data access | `com.diagramio.infrastructure` | Spring Data JPA (`@Entity`, `JpaRepository`) or hand-written SQL (`NamedParameterJdbcTemplate`), classes implementing the domain repository interfaces, Entity <-> domain mappers |
 | Wiring | `com.diagramio.config` | Spring configuration: security, OpenAPI, `@Bean` definitions that create domain services |
 
 - The business layer must NOT import any web framework or database library (no Spring, `jakarta.persistence`, Hibernate, Servlet). No `@Service`, `@Transactional`, `@Entity`, or `ResponseEntity` in `domain`. Register domain services as beans in `config`.
@@ -29,7 +29,10 @@
 - `ArchitectureTest` enforces these rules; keep it green.
 - Authentication is done once in a security filter (JWT or `X-Share-Token`), not repeated in each endpoint.
 - Controllers receive the caller as a method parameter, resolved by `CallerArgumentResolver`: `Caller caller` for diagram, version and public endpoints (anonymous when there is no login or link), or `@CurrentUser UUID userId` for endpoints that need an account (401 otherwise). Never read `Authentication` or use `@AuthenticationPrincipal` in a controller.
-- Services check diagram permissions only through `DiagramAccess.require(diagramId, caller, Permission)` (`VIEW`, `VIEW_HISTORY`, `EDIT`, `MANAGE`): 404 if missing, 401 if the caller has neither an account nor a link to that diagram, 403 otherwise. Do not write `caller.canX(...)` checks or throw access exceptions by hand in services.
+- Services check diagram permissions only through `DiagramAccess` (`VIEW`, `VIEW_HISTORY`, `EDIT`, `MANAGE`): 404 if missing, 401 if the caller has neither an account nor a link to that diagram, 403 otherwise. Do not write `caller.canX(...)` checks or throw access exceptions by hand in services.
+  - `require(diagramId, caller, Permission)` reads only `DiagramAccessInfo` (owner, public flag, version), never `data`. Use it whenever the operation does not return the diagram content.
+  - `requireLocked(...)` does the same with `SELECT ... FOR UPDATE`; call it inside `TransactionRunner` when concurrent requests must queue (save or restore a version).
+  - `requireDiagram(...)` loads the whole diagram, only when the response returns its content.
 
 ## Database Migrations
 
@@ -71,6 +74,8 @@
 - Treat saved diagram versions as immutable snapshots.
 - Before restoring an old version, snapshot the current state, then copy the selected snapshot into the current diagram state atomically.
 - Keep authorization checks, version checks, and related writes within the appropriate transaction boundaries.
+- Read only the columns an operation needs: lists and version history use summary projections without `data`; snapshots and restores copy `data` inside the database (`INSERT ... SELECT`, `UPDATE ... FROM`) instead of sending it through the app.
+- Do not mix JPA and hand-written SQL on the same table: inside one transaction a JPA entity already loaded does not see JDBC `UPDATE`/`DELETE`. The `diagrams`, `diagram_versions` adapters are SQL only.
 - Use transactions by rule, not everywhere. Domain services get them through the `TransactionRunner` port:
 
 | Operation | Transaction | Example |
@@ -78,7 +83,7 @@
 | Read, check, then write | Yes (`TransactionRunner`) | restore a version, rotate a refresh token |
 | Several rows or tables that must stay consistent | Yes | restore = backup snapshot + overwrite diagram |
 | Concurrent requests must queue | Yes, plus a row lock (`SELECT ... FOR UPDATE`) | save or restore a version |
-| One write that is already safe on its own | No | delete a share; update a diagram (guarded by `@Version`); change a share role (one conditional `UPDATE`) |
+| One write that is already safe on its own | No | delete a share; update a diagram (one `UPDATE ... WHERE version = :expected`); change a share role (one conditional `UPDATE`) |
 | Pure reads | No | get a diagram, list versions |
 | Calls to outside systems (email, HTTP, files) | Never inside a transaction | do them after commit |
 

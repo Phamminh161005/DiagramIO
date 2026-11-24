@@ -41,6 +41,11 @@ JVM_OPTS="${JVM_OPTS:--Xms$JVM_HEAP -Xmx$JVM_HEAP -XX:+UseG1GC -XX:+AlwaysPreTou
 JWT_SECRET="${JWT_SECRET:-diagramio-bench-only-secret-not-for-production-0123456789}"
 # Access token sống đủ lâu cho một lần chạy dài (mặc định 15 phút); không ảnh hưởng chi phí kiểm tra token
 JWT_MINUTES="${JWT_MINUTES:-480}"
+# Tham số chung cho mọi cấu hình, kể cả bản dựng từ tag cũ, để phép so sánh luôn công bằng. Flame graph của M0
+# cho thấy Spring Security quan sát (observation) từng filter và mỗi lần cập nhật một LongTaskTimer O(n) theo số
+# request đang chạy: gần 8% CPU của app ở W2 là chi phí của chính phần đo. Hai cờ dưới đây tắt phần đó mà vẫn
+# giữ số liệu http.server.requests.
+BENCH_APP_ARGS="${BENCH_APP_ARGS---management.observations.enable.spring.security=false --management.observations.long-task-timer.enabled=false}"
 
 log() { echo "[$(date +%H:%M:%S)] $*"; }
 die() { echo "[$(date +%H:%M:%S)] LỖI: $*" >&2; exit 1; }
@@ -109,7 +114,7 @@ start_app() {
     --spring.datasource.url="jdbc:postgresql://127.0.0.1:$PG_PORT/$database" \
     --spring.datasource.username="$DB_USER" --spring.datasource.password="$DB_PASSWORD" \
     --jwt.secret="$JWT_SECRET" --jwt.access-token-minutes="$JWT_MINUTES" \
-    "$@" > "$logdir/app.log" 2>&1 &
+    $BENCH_APP_ARGS "$@" > "$logdir/app.log" 2>&1 &
   APP_PID=$!
   if ! wait_http "http://127.0.0.1:$APP_PORT/api/v1/health" 180; then
     tail -n 60 "$logdir/app.log" >&2

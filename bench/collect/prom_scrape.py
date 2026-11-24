@@ -8,6 +8,7 @@ Giữ lại:
   tomcat_threads_*                                 luồng xử lý request
   jvm_gc_pause_seconds_{count,sum}, jvm_memory_used_bytes (heap), jvm_threads_live_threads,
   process_cpu_usage, system_cpu_usage
+  cache_*, diagramio_*                             cache sơ đồ (B2): trúng/trượt L1 (Caffeine) và L2 (Redis)
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ import time
 import urllib.request
 
 KEEP_PREFIXES = ("hikaricp_connections", "tomcat_threads", "jvm_threads_live_threads", "process_cpu_usage",
-                 "system_cpu_usage")
+                 "system_cpu_usage", "cache_gets", "cache_puts", "cache_evictions", "cache_size", "diagramio_")
 KEEP_EXACT = ("jvm_gc_pause_seconds_count", "jvm_gc_pause_seconds_sum")
 HTTP = ("http_server_requests_seconds_count", "http_server_requests_seconds_sum",
         "http_server_requests_seconds_bucket")

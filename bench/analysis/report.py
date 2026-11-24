@@ -26,6 +26,7 @@ SLO_ERROR_RATE = 0.01         # lỗi dưới 1%
 SLO_ACHIEVED = 0.95           # đạt ít nhất 95% tốc độ đến yêu cầu
 LOADGEN_CPU_LIMIT = 0.80      # k6 dùng dưới 80% CPU được cấp
 STEAL_LIMIT_PCT = 5.0
+DROPPED_LIMIT = 0.005         # bỏ dưới 0,5% iteration (thường là lúc k6 đang khởi tạo thêm VU) thì không đáng kể
 
 # Bảng màu phân loại theo thứ tự cố định (đã kiểm tra mù màu cho 3 màu đầu), mực chữ và nền biểu đồ
 SERIES = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"]
@@ -200,6 +201,7 @@ def run_metrics(run: Run) -> dict:
     m.update(count=count, p50=run.value(d, "med"), p95=run.value(d, "p(95)"), p99=run.value(d, "p(99)"),
              avg=run.value(d, "avg"), err=run.value("http_req_failed{phase:measure}", "rate", 0.0))
     m["rps"] = count / run.measure if run.mode != "capacity" and run.measure else None
+    m["measure_s"] = run.warmup + run.measure   # iteration bị bỏ được đếm trên cả lần chạy
     m["target"] = num(run.level) if run.mode == "fixed" else None
     for key, metric in (("r304", "resp_304"), ("r409", "resp_409"), ("r4xx", "resp_4xx_other"),
                         ("r5xx", "resp_5xx"), ("rnone", "resp_no_response"), ("conflicts", "write_conflicts"),
@@ -233,6 +235,11 @@ def run_metrics(run: Run) -> dict:
         m["gc_ms_per_s"] = 1000.0 * gc / span if gc is not None and span else None
         heap = run.gauge("jvm_heap_used_bytes", window, max)
         m["heap_max_mb"] = heap / 2**20 if heap else None
+        # Tỉ lệ trúng cache sơ đồ (B2): Caffeine (L1) và Redis (L2), None nếu cấu hình không có cache
+        for level, metric in (("l1", "cache_gets_total"), ("l2", "diagramio_cache_l2_total")):
+            hits = run.counter_delta(metric, window, lambda labels: "cache=diagrams" in labels and "result=hit" in labels)
+            misses = run.counter_delta(metric, window, lambda labels: "cache=diagrams" in labels and "result=miss" in labels)
+            m[f"hit_{level}"] = hits / (hits + misses) if hits is not None and misses is not None and hits + misses else None
 
     pg = pg_totals(run)
     total_requests = run.value("http_reqs", "count", 0) or 0
@@ -308,15 +315,18 @@ def validity(m: dict) -> list[str]:
         issues.append(f"k6 dùng tới {loadgen:.2f} CPU (> {LOADGEN_CPU_LIMIT}): máy tạo tải có thể là nút thắt")
     if m.get("steal") is not None and m["steal"] > STEAL_LIMIT_PCT:
         issues.append(f"steal {m['steal']:.1f}% (máy ảo bị chiếm CPU)")
-    if m["mode"] == "fixed" and m.get("rps") and m["target"] and m["rps"] < SLO_ACHIEVED * m["target"]:
-        issues.append(f"chỉ đạt {m['rps']:.0f}/{m['target']:.0f} req/s")
-    # Ở chế độ capacity, bậc quá tải bỏ iteration là bình thường; từng bậc đã được kiểm tra tốc độ đạt được
-    if m["dropped"] and m["mode"] == "fixed":
-        issues.append(f"{m['dropped']:.0f} iteration bị bỏ (thiếu VU)")
+    overloaded = (m["mode"] == "fixed" and m.get("rps") and m["target"]
+                  and m["rps"] < SLO_ACHIEVED * m["target"])
+    if overloaded:
+        # Mức tải cao hơn sức chứa: hệ thống không phục vụ kịp nên k6 phải bỏ iteration. Đây là kết quả
+        # (điểm bão hòa) chứ không phải lỗi bộ đo, nhưng độ trễ của lần chạy này không so được với lần khác.
+        issues.append(f"vượt sức chứa: chỉ đạt {m['rps']:.0f}/{m['target']:.0f} req/s")
+    elif m["mode"] == "fixed" and m["target"] and m["dropped"] > DROPPED_LIMIT * m["target"] * (m["measure_s"] or 1):
+        issues.append(f"{m['dropped']:.0f} iteration bị bỏ (thiếu VU sẵn sàng)")
     if m["workload"] in ("w2", "w3") and m["conflicts"]:
-        issues.append(f"{m['conflicts']:.0f} lần 409 do VU dùng chung phân vùng (lỗi bộ đo)")
+        issues.append(f"{m['conflicts']:.0f} lần 409 ngoài dự kiến (VU nhớ sai version: lỗi bộ đo)")
     if m["fallbacks"]:
-        issues.append(f"{m['fallbacks']:.0f} thao tác phải đổi sang đọc vì thiếu dữ liệu (tăng SCALE)")
+        issues.append(f"{m['fallbacks']:.0f} thao tác phải đổi sang đọc vì phân vùng của VU không có dữ liệu phù hợp (giảm MAX_VUS hoặc tăng SCALE)")
     if m.get("checkpoints"):
         issues.append(f"{m['checkpoints']:.0f} checkpoint giữa lần đo")
     if m["mode"] != "capacity" and m["err"] and m["err"] >= SLO_ERROR_RATE:
@@ -342,6 +352,16 @@ def fmt(stat, digits=1, unit="") -> str:
             return f"{med:.{digits}f}{unit}"
         return f"{med:.{digits}f}{unit} ({lo:.{digits}f}–{hi:.{digits}f})"
     return f"{stat:.{digits}f}{unit}"
+
+
+def hit_ratio(ms: list[dict]) -> str:
+    """Tỉ lệ trúng cache L1 (và L2 nếu có), trung vị qua các lần lặp; "–" khi cấu hình không có cache."""
+    parts = []
+    for level in ("l1", "l2"):
+        s = spread([m.get(f"hit_{level}") for m in ms])
+        if s:
+            parts.append(f"{level.upper()} {100 * s[0]:.0f}%")
+    return ", ".join(parts) or "–"
 
 
 def level_key(level: str):
@@ -600,8 +620,8 @@ def write_report(session: Path, metrics: list[dict]) -> Path:
             lines += [f"### {title}", "", "Trung vị (min–max) qua các lần lặp, chỉ tính pha đo.", ""]
             head = "VU" if closed else "Tốc độ đến"
             lines += [f"| Cấu hình | {head} | Throughput (req/s) | p50 (ms) | p95 (ms) | p99 (ms) | Lỗi | "
-                      "CPU app | CPU PostgreSQL | CPU k6 | Server trung bình (ms) | SQL/request | Khối TOAST/request |",
-                      "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+                      "CPU app | CPU PostgreSQL | CPU k6 | Server trung bình (ms) | SQL/request | Khối TOAST/request | Trúng cache |",
+                      "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
             for (cfg, level) in sorted(groups, key=lambda k: (configs.index(k[0]), level_key(k[1]))):
                 ms = groups[(cfg, level)]
                 g = lambda key: spread([m.get(key) for m in ms])   # noqa: E731
@@ -609,7 +629,7 @@ def write_report(session: Path, metrics: list[dict]) -> Path:
                     f"| {cfg} | {level} | {fmt(g('rps'), 0)} | {fmt(g('p50'))} | {fmt(g('p95'))} | {fmt(g('p99'))} | "
                     f"{fmt(spread([100 * m['err'] for m in ms]), 2, '%')} | {fmt(g('cpu_app'), 2)} | "
                     f"{fmt(g('cpu_db'), 2)} | {fmt(g('cpu_loadgen'), 2)} | {fmt(g('srv_mean'), 2)} | "
-                    f"{fmt(g('sql_per_req'), 2)} | {fmt(g('toast_per_req'), 1)} |")
+                    f"{fmt(g('sql_per_req'), 2)} | {fmt(g('toast_per_req'), 1)} | {hit_ratio(ms)} |")
             lines.append("")
             lines += ["Phía server (trung vị qua các lần lặp). Transaction CSDL tính cả câu lệnh chạy autocommit, "
                       "mỗi câu như vậy là một transaction riêng ở PostgreSQL:", "",
@@ -683,7 +703,7 @@ def write_summary_csv(session: Path, metrics: list[dict]) -> Path:
               "capacity", "p50", "p95", "p99", "avg", "err", "r304", "r409", "r4xx", "r5xx", "rnone", "conflicts",
               "fallbacks", "dropped", "cpu_app", "cpu_db", "cpu_loadgen", "loadgen_max", "steal", "sut_busy",
               "srv_mean", "srv_p95", "hikari_active", "hikari_pending_max", "tomcat_busy", "tomcat_busy_max",
-              "gc_ms_per_s", "heap_max_mb", "sql_per_req", "commits_per_req", "blocks_per_req", "toast_per_req",
+              "gc_ms_per_s", "heap_max_mb", "hit_l1", "hit_l2", "sql_per_req", "commits_per_req", "blocks_per_req", "toast_per_req",
               "db_ms_per_req", "checkpoints"]
     path = session / "summary.csv"
     with path.open("w", newline="", encoding="utf-8") as f:

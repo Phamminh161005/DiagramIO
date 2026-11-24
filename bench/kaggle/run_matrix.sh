@@ -26,12 +26,12 @@ case "$matrix" in
       "w2 fixed 500"
       "w2 fixed 800"
       "w2 capacity auto RATE_START=100 RATE_STEP=100 RATE_MAX=3000 MAX_VUS=1000"
-      "w3 fixed 20"
-      "w3 fixed 50"
-      "w3 capacity auto RATE_START=10 RATE_STEP=10 RATE_MAX=400 MAX_VUS=300"
+      "w3 fixed 20 MAX_VUS=200"
+      "w3 fixed 50 MAX_VUS=200"
+      "w3 capacity auto RATE_START=10 RATE_STEP=10 RATE_MAX=400 MAX_VUS=200"
     )
     # Mỗi kịch bản chính có thêm một lần chạy lấy flame graph, không tính vào số liệu
-    PROFILE_PLAN=("w2 fixed 500" "w3 fixed 50")
+    PROFILE_PLAN=("w2 fixed 500" "w3 fixed 50 MAX_VUS=200")
     ;;
   quick)
     CONFIGS=(C0)

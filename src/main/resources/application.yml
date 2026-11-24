@@ -33,6 +33,13 @@ management:
     web:
       exposure:
         include: [health, prometheus]
+  observations:
+    # Flame graph M0 (W2): quan sát từng filter của Spring Security và LongTaskTimer cho mỗi request tốn 7,9% CPU
+    # của app mà không có số liệu nào được dùng. http.server.requests vẫn đo như cũ.
+    enable:
+      spring.security: false
+    long-task-timer:
+      enabled: false
   metrics:
     distribution:
       # Bucket histogram cho thời gian xử lý mỗi request, để tính p95 phía server theo từng cửa sổ thời gian

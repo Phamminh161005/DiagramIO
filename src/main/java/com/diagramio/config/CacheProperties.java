@@ -11,12 +11,12 @@ import org.springframework.util.unit.DataSize;
  *
  * @param mode            {@code none} (đi thẳng CSDL) | {@code local} (Caffeine) | {@code redis} (chỉ Redis) |
  *                        {@code two-level} (Caffeine + Redis, nhiều instance)
- * @param localMaxSize    dung lượng tối đa của L1 cho sơ đồ
+ * @param localMaxSize    dung lượng tối đa của L1 cho sơ đồ (không quá 25% heap)
  * @param localTtl        thời gian sống của một sơ đồ trong L1 kể từ lần ghi
  * @param redisTtl        thời gian sống của một sơ đồ trên Redis
  * @param tombstoneTtl    thời gian giữ bia mộ của sơ đồ vừa xóa
  * @param maxEntrySize    sơ đồ có data lớn hơn thì không cache
- * @param versionMaxSize  dung lượng tối đa của cache phiên bản (bất biến, không hết hạn)
+ * @param versionMaxSize  dung lượng tối đa của cache phiên bản (bất biến, không hết hạn; không quá 10% heap)
  * @param publicListTtl   micro-cache danh sách công khai; mặc định tắt (0) vì sơ đồ vừa chuyển sang riêng tư sẽ
  *                        còn trong danh sách tới hết thời gian này, và sau B1 câu danh sách đã rẻ (ADR-0003)
  * @param monitorInterval chu kỳ kiểm tra Redis và pub/sub

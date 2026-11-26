@@ -47,11 +47,28 @@ public record CachedDiagram(UUID id, String title, DiagramType diagramType, Diag
         return deleted ? Optional.empty() : Optional.of(new DiagramAccessInfo(id, ownerId, isPublic, version));
     }
 
-    /** Kích thước xấp xỉ trong bộ nhớ (byte), để giới hạn cache theo dung lượng thay vì số mục. */
+    /** Kích thước xấp xỉ trong heap (byte), để giới hạn cache theo dung lượng thay vì số mục. */
     public int weight() {
-        int dataChars = data == null ? 0 : data.json().length();
-        int titleChars = title == null ? 0 : title.length();
-        return 256 + dataChars + 2 * titleChars;
+        long bytes = 256 + heapBytes(data == null ? null : data.json()) + heapBytes(title);
+        return (int) Math.min(Integer.MAX_VALUE, bytes);
+    }
+
+    /**
+     * Số byte một chuỗi chiếm trong heap. Java (compact strings) lưu 1 byte mỗi ký tự khi mọi ký tự thuộc Latin-1, chỉ
+     * cần một ký tự ngoài Latin-1 (như "ư", "đ" của tiếng Việt) là cả chuỗi 2 byte mỗi ký tự. Đếm theo độ dài chuỗi
+     * thôi thì cache sơ đồ tiếng Việt có thể chiếm gấp đôi giới hạn đã cấu hình.
+     */
+    public static long heapBytes(String value) {
+        if (value == null) {
+            return 0;
+        }
+        int length = value.length();
+        for (int i = 0; i < length; i++) {
+            if (value.charAt(i) > 0xFF) {
+                return 2L * length;
+            }
+        }
+        return length;
     }
 
     /** Độ dài của data (ký tự), để bỏ qua không cache sơ đồ quá lớn. */

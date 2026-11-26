@@ -68,6 +68,12 @@ Mô hình nhất quán:
 
 Micrometer: `cache_gets_total{cache="diagrams"|"versions",result="hit"|"miss"}` (Caffeine), `cache_evictions_total`, `cache_size`, `diagramio_cache_l2_total{cache="diagrams",result="hit"|"miss"|"error"}`, `diagramio_cache_l2_up`. Bộ đo đọc tỉ lệ trúng L1, L2, tỉ lệ 304 và CPU của Redis (`bench/analysis/report.py`).
 
+### 7. Cập nhật sau rà soát ([ADR-0005](0005-ra-soat-gia-co-sau-b3.md))
+
+- Bộ theo dõi đăng ký kênh pub/sub trong luồng của nó và thử lại ở mỗi nhịp: Redis chưa lên lúc khởi động thì app vẫn chạy bằng CSDL (trước đây app dừng hẳn).
+- Một lần ghi sơ đồ chỉ tốn một lượt tới Redis: publish nằm trong script Lua ghi có so version.
+- Dung lượng cache đếm đúng byte trong heap (chuỗi có ký tự ngoài Latin-1 chiếm 2 byte mỗi ký tự) và không quá 25% heap (sơ đồ), 10% heap (phiên bản).
+
 ## Các phương án đã cân nhắc
 
 | Vấn đề | Phương án | Chọn và lý do |

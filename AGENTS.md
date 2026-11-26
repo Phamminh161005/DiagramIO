@@ -11,6 +11,7 @@
 - Use springdoc-openapi for OpenAPI/Swagger documentation.
 - Use Maven as the default build and dependency-management tool unless the repository already establishes Gradle.
 - Package and run the service with Docker and Docker Compose. Keep local infrastructure configuration reproducible and do not commit secrets.
+- Keep the Docker image layered (dependencies apart from application classes), running as a non-root user, with the container-aware JVM flags in `JAVA_TOOL_OPTIONS`. Keep `mvnw` and every `*.sh` executable in git (mode `100755`).
 
 ## Architecture
 
@@ -65,6 +66,7 @@
 - Do not expose private diagram data, credentials, refresh tokens, or internal implementation details in public responses.
 - Spring Boot Actuator serves only `health` and `prometheus`, only on the separate management port (`MANAGEMENT_PORT`, default 9090) bound to `127.0.0.1`. Never expose Actuator on the API port; `ManagementEndpointsE2eTest` guards this.
 - Validate and constrain request bodies, including the maximum 2 MB diagram JSON payload, before persistence.
+- `RequestSizeLimitFilter` rejects bodies above `diagramio.http.max-request-size` (default 4 MB) with 413 before anything reads or parses them (ADR-0005). Keep it ahead of Spring Security; the 2 MB `DiagramData` rule stays the domain check (400).
 - Diagram JSON is a `DiagramData` value object: build it with `DiagramData.of(json)` from user input (validates the `nodes`/`edges` shape and 2 MB) and with `DiagramData.fromStorage(json)` only for data read back from the database. Do not pass raw JSON strings through the domain.
 
 ## Data Integrity and Concurrency
@@ -115,6 +117,7 @@
 - Verify status codes and response shapes, not only whether a request succeeds.
 - `SqlPerRequestE2eTest` pins the SQL statements, commits, pool checkouts, and `data` round trips of every endpoint (with the cache off, `diagramio.cache.mode=none`). A change that alters them must update the expected numbers in the same PR; performance claims are measured with `bench/` (see `docs/adr/0001-phuong-phap-do.md`).
 - Run the smallest relevant formatter, linter, type checker, and test commands before considering a change complete.
+- CI (`.github/workflows/ci.yml`) runs `./mvnw verify`, `shellcheck` on the bench scripts, a Python syntax check and a Docker build on every pull request and push to `main`; keep it green.
 - Use the repository's documented commands and configuration; do not invent replacement tooling without a clear need.
 
 ## Documentation and Delivery

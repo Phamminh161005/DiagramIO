@@ -57,6 +57,12 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<ErrorResponse> handleUnreadable(HttpMessageNotReadableException ex,
                                                           HttpServletRequest request) {
+        // Body gửi kiểu chunked vượt giới hạn: RequestSizeLimitFilter dừng việc đọc giữa chừng
+        for (Throwable cause = ex; cause != null; cause = cause.getCause()) {
+            if (cause instanceof RequestSizeLimitFilter.RequestTooLargeException tooLarge) {
+                return build(HttpStatus.PAYLOAD_TOO_LARGE, tooLarge.getMessage(), request);
+            }
+        }
         return build(HttpStatus.BAD_REQUEST, "Request body is missing or not valid JSON", request);
     }
 

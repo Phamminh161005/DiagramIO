@@ -21,6 +21,8 @@ import io.lettuce.core.TimeoutOptions;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Duration;
 import java.util.function.BooleanSupplier;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.data.redis.LettuceClientConfigurationBuilderCustomizer;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -44,14 +46,35 @@ import org.springframework.data.redis.connection.RedisConnectionFactory;
 @EnableConfigurationProperties(CacheProperties.class)
 public class CacheConfig {
 
+    /** Cache sơ đồ trong JVM được dùng tối đa chừng này phần heap, dù cấu hình cho phép nhiều hơn. */
+    static final double DIAGRAM_HEAP_SHARE = 0.25;
+    /** Cache phiên bản được dùng tối đa chừng này phần heap. */
+    static final double VERSION_HEAP_SHARE = 0.10;
+
+    private static final Logger log = LoggerFactory.getLogger(CacheConfig.class);
+
+    /**
+     * Dung lượng thật của một cache trong JVM: giá trị cấu hình, nhưng không quá {@code share} của heap tối đa. Mặc định
+     * 256 MB + 128 MB hợp với heap 2 GB của bộ đo, nhưng trong container nhỏ (heap mặc định của JVM chỉ là 25% RAM của
+     * container) thì sẽ vượt heap và gây OutOfMemoryError.
+     */
+    static long boundedByHeap(long configuredBytes, double share, long maxHeapBytes) {
+        return Math.min(configuredBytes, (long) (maxHeapBytes * share));
+    }
+
     @Bean
     public DiagramCache diagramCache(CacheProperties properties, ObjectProvider<RedisConnectionFactory> redis,
                                      MeterRegistry registry) {
         DiagramCache.Mode mode = properties.mode();
+        long maxHeap = Runtime.getRuntime().maxMemory();
+        long localBytes = boundedByHeap(properties.localMaxSize().toBytes(), DIAGRAM_HEAP_SHARE, maxHeap);
         LocalDiagramTier local = mode.usesLocal()
-                ? new LocalDiagramTier(properties.localMaxSize().toBytes(), properties.localTtl(),
-                        properties.tombstoneTtl())
+                ? new LocalDiagramTier(localBytes, properties.localTtl(), properties.tombstoneTtl())
                 : null;
+        if (local != null) {
+            log.info("Cache sơ đồ trong JVM: tối đa {} MB (cấu hình {} MB, heap {} MB)", localBytes >> 20,
+                    properties.localMaxSize().toMegabytes(), maxHeap >> 20);
+        }
         RedisDiagramTier remote = mode.usesRedis()
                 ? new RedisDiagramTier(redis.getObject(), properties.redisTtl(), properties.tombstoneTtl())
                 : null;
@@ -97,7 +120,8 @@ public class CacheConfig {
     public DiagramVersionRepository cachingDiagramVersionRepository(DiagramVersionRepositoryAdapter adapter,
                                                                     CacheProperties properties,
                                                                     MeterRegistry registry) {
-        long maxBytes = properties.mode() == DiagramCache.Mode.NONE ? 0 : properties.versionMaxSize().toBytes();
+        long maxBytes = properties.mode() == DiagramCache.Mode.NONE ? 0
+                : boundedByHeap(properties.versionMaxSize().toBytes(), VERSION_HEAP_SHARE, Runtime.getRuntime().maxMemory());
         return new CachingDiagramVersionRepository(adapter, maxBytes, registry);
     }
 

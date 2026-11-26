@@ -83,9 +83,13 @@ public class DiagramShareController {
     }
 
     @PatchMapping("/{share_id}")
-    @Operation(summary = "Thay đổi mức độ quyền chia sẻ", description = "Đổi mức quyền (view <-> edit). Chỉ chủ sở hữu mới có quyền.")
+    @Operation(summary = "Thay đổi mức độ quyền chia sẻ", description = "Đổi mức quyền (view <-> edit). Chỉ chủ sở "
+            + "hữu mới có quyền. Quyền mới có hiệu lực ngay từ request tiếp theo của người cầm link, ở mọi instance.")
     @ApiResponse(responseCode = "200", description = "Đã đổi quyền")
     @ApiResponse(responseCode = "400", description = "role không phải view/edit",
+            content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+    @ApiResponse(responseCode = "503", description = "Tạm thời không đổi được link một cách an toàn (cache dùng "
+            + "chung không phản hồi); link giữ nguyên, thử lại sau Retry-After giây",
             content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
     public ResponseEntity<ShareResponse> updateShare(
             @PathVariable("id") UUID diagramId,
@@ -100,7 +104,11 @@ public class DiagramShareController {
 
     @DeleteMapping("/{share_id}")
     @ApiResponse(responseCode = "204", description = "Đã thu hồi, token mất hiệu lực ngay")
-    @Operation(summary = "Thu hồi liên kết chia sẻ", description = "Vô hiệu hóa liên kết chia sẻ ngay lập tức. Chỉ chủ sở hữu mới có quyền.")
+    @ApiResponse(responseCode = "503", description = "Tạm thời không đổi được link một cách an toàn (cache dùng "
+            + "chung không phản hồi); link giữ nguyên, thử lại sau Retry-After giây",
+            content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+    @Operation(summary = "Thu hồi liên kết chia sẻ", description = "Vô hiệu hóa liên kết chia sẻ ngay lập tức: "
+            + "request tiếp theo dùng token, ở bất kỳ instance nào, đều bị từ chối. Chỉ chủ sở hữu mới có quyền.")
     public ResponseEntity<Void> revokeShare(
             @PathVariable("id") UUID diagramId,
             @PathVariable("share_id") UUID shareId,

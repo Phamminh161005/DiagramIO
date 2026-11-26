@@ -24,8 +24,9 @@ import org.testcontainers.containers.GenericContainer;
 
 /**
  * Hai instance của app (hai Spring context, hai cổng) dùng chung PostgreSQL và Redis, cache {@code two-level}, như
- * khi chạy sau load balancer. Ghi ở instance A thì instance B thấy sau độ trễ pub/sub (test cho phép tới 3 giây,
- * thực tế vài ms); Redis treo thì cả hai đọc thẳng CSDL và không bao giờ trả bản cũ.
+ * khi chạy sau load balancer. Nội dung sơ đồ (B2): ghi ở instance A thì instance B thấy sau độ trễ pub/sub (test cho
+ * phép tới 3 giây, thực tế vài ms); Redis treo thì cả hai đọc thẳng CSDL và không bao giờ trả bản cũ. Quyền qua link
+ * chia sẻ (B3, QA-SEC1): thu hồi hay hạ quyền ở A thì request ĐẦU TIÊN ở B đã bị từ chối, không có độ trễ nào.
  */
 class TwoInstanceCacheE2eTest {
 
@@ -146,7 +147,86 @@ class TwoInstanceCacheE2eTest {
         }
     }
 
+    // ------------------------------------------------------------------ B3: link chia sẻ (QA-SEC1)
+
+    @Test
+    void revokingALinkOnOneInstanceIsEnforcedByTheOtherAtTheVeryFirstRequest() {
+        String token = login();
+        String id = createDiagram(token);
+        JsonNode share = createShare(portA, token, id, "edit");
+        String shareToken = share.path("shareToken").asText();
+        assertThat(sendWithShare(portB, "GET", "/diagrams/" + id, shareToken, null).statusCode()).isEqualTo(200);
+        assertThat(get(portB, "/shares/" + shareToken, null).statusCode()).isEqualTo(200);   // token nằm trên Redis
+
+        assertThat(send(portA, "DELETE", "/diagrams/" + id + "/shares/" + share.path("id").asText(), token, null)
+                .statusCode()).isEqualTo(204);
+
+        // Không chờ: ngay request đầu tiên ở B
+        assertThat(sendWithShare(portB, "GET", "/diagrams/" + id, shareToken, null).statusCode()).isEqualTo(401);
+        assertThat(get(portB, "/shares/" + shareToken, null).statusCode()).isEqualTo(404);
+    }
+
+    @Test
+    void downgradingALinkOnOneInstanceIsEnforcedByTheOtherAtTheVeryFirstRequest() {
+        String token = login();
+        String id = createDiagram(token);
+        JsonNode share = createShare(portA, token, id, "edit");
+        String shareToken = share.path("shareToken").asText();
+        assertThat(sendWithShare(portB, "PUT", "/diagrams/" + id, shareToken, updateBody(1, "Edited on B", false))
+                .statusCode()).isEqualTo(200);
+
+        assertThat(send(portA, "PATCH", "/diagrams/" + id + "/shares/" + share.path("id").asText(), token,
+                obj("role", "view")).statusCode()).isEqualTo(200);
+
+        assertThat(sendWithShare(portB, "PUT", "/diagrams/" + id, shareToken, updateBody(2, "Again on B", false))
+                .statusCode()).isEqualTo(403);
+        assertThat(json(get(portB, "/shares/" + shareToken, null)).path("role").asText()).isEqualTo("view");
+    }
+
+    @Test
+    void whenRedisHangsALinkCannotBeRevokedButKeepsWorkingUntilItIs() {
+        String token = login();
+        String id = createDiagram(token);
+        JsonNode share = createShare(portA, token, id, "view");
+        String shareToken = share.path("shareToken").asText();
+        String revoke = "/diagrams/" + id + "/shares/" + share.path("id").asText();
+
+        var docker = redis.getDockerClient();
+        docker.pauseContainerCmd(redis.getContainerId()).exec();
+        try {
+            // Không bảo đảm được B thấy ngay thì không thu hồi, và nói rõ để client thử lại
+            HttpResponse<String> refused = send(portA, "DELETE", revoke, token, null);
+            assertThat(refused.statusCode()).as(refused.body()).isEqualTo(503);
+            assertThat(refused.headers().firstValue("Retry-After")).contains("1");
+            assertThat(sendWithShare(portB, "GET", "/diagrams/" + id, shareToken, null).statusCode()).isEqualTo(200);
+        } finally {
+            docker.unpauseContainerCmd(redis.getContainerId()).exec();
+        }
+
+        await(() -> send(portA, "DELETE", revoke, token, null).statusCode(), status -> status == 204,
+                "revoke succeeds once Redis is back");
+        assertThat(sendWithShare(portB, "GET", "/diagrams/" + id, shareToken, null).statusCode()).isEqualTo(401);
+    }
+
     // ------------------------------------------------------------------ HTTP helpers
+
+    private static JsonNode createShare(int port, String token, String diagramId, String role) {
+        HttpResponse<String> created = send(port, "POST", "/diagrams/" + diagramId + "/shares", token, obj("role", role));
+        assertThat(created.statusCode()).as(created.body()).isEqualTo(201);
+        return json(created);
+    }
+
+    private static ObjectNode updateBody(int version, String title, boolean isPublic) {
+        ObjectNode body = obj("title", title, "diagramType", "UML", "version", version, "isPublic", isPublic);
+        body.set("data", JSON.createObjectNode().<ObjectNode>set("nodes", JSON.createArrayNode())
+                .set("edges", JSON.createArrayNode()));
+        return body;
+    }
+
+    private static HttpResponse<String> sendWithShare(int port, String method, String path, String shareToken,
+                                                      JsonNode body) {
+        return send(port, method, path, null, body, shareToken);
+    }
 
     private static String login() {
         String user = "u" + UUID.randomUUID().toString().substring(0, 12).replace("-", "");
@@ -179,10 +259,18 @@ class TwoInstanceCacheE2eTest {
     }
 
     private static HttpResponse<String> send(int port, String method, String path, String token, JsonNode body) {
+        return send(port, method, path, token, body, null);
+    }
+
+    private static HttpResponse<String> send(int port, String method, String path, String token, JsonNode body,
+                                             String shareToken) {
         HttpRequest.Builder request = HttpRequest.newBuilder(URI.create("http://localhost:" + port + API + path))
                 .timeout(Duration.ofSeconds(30)).header("Accept", "application/json");
         if (token != null) {
             request.header("Authorization", "Bearer " + token);
+        }
+        if (shareToken != null) {
+            request.header("X-Share-Token", shareToken);
         }
         if (body != null) {
             request.header("Content-Type", "application/json");

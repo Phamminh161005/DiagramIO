@@ -6,6 +6,7 @@ import com.diagramio.domain.exception.DomainException;
 import com.diagramio.domain.exception.ForbiddenException;
 import com.diagramio.domain.exception.InvalidInputException;
 import com.diagramio.domain.exception.NotFoundException;
+import com.diagramio.domain.exception.ServiceUnavailableException;
 import com.diagramio.domain.exception.UnauthorizedException;
 import jakarta.servlet.http.HttpServletRequest;
 import java.time.Instant;
@@ -13,6 +14,7 @@ import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -34,7 +36,13 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(DomainException.class)
     public ResponseEntity<ErrorResponse> handleDomain(DomainException ex, HttpServletRequest request) {
-        return build(statusOf(ex), ex.getMessage(), request);
+        HttpStatus status = statusOf(ex);
+        if (status == HttpStatus.SERVICE_UNAVAILABLE) {
+            // Sự cố tạm thời: báo client thử lại sau 1 giây
+            return ResponseEntity.status(status).header(HttpHeaders.RETRY_AFTER, "1")
+                    .body(body(status, ex.getMessage(), request));
+        }
+        return build(status, ex.getMessage(), request);
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
@@ -102,6 +110,9 @@ public class GlobalExceptionHandler {
         }
         if (ex instanceof InvalidInputException) {
             return HttpStatus.BAD_REQUEST;
+        }
+        if (ex instanceof ServiceUnavailableException) {
+            return HttpStatus.SERVICE_UNAVAILABLE;
         }
         return HttpStatus.INTERNAL_SERVER_ERROR;
     }

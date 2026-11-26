@@ -4,17 +4,23 @@ import com.diagramio.domain.diagram.DiagramRepository;
 import com.diagramio.domain.version.DiagramVersionRepository;
 import com.diagramio.infrastructure.cache.CachingDiagramRepository;
 import com.diagramio.infrastructure.cache.CachingDiagramVersionRepository;
+import com.diagramio.infrastructure.cache.CachingShareRepository;
 import com.diagramio.infrastructure.cache.DiagramCache;
 import com.diagramio.infrastructure.cache.LocalDiagramTier;
+import com.diagramio.infrastructure.cache.LocalShareTokenStore;
 import com.diagramio.infrastructure.cache.RedisCacheMonitor;
 import com.diagramio.infrastructure.cache.RedisDiagramTier;
+import com.diagramio.infrastructure.cache.RedisShareTokenStore;
+import com.diagramio.infrastructure.cache.ShareTokenStore;
 import com.diagramio.infrastructure.diagram.DiagramRepositoryAdapter;
+import com.diagramio.infrastructure.share.DiagramShareRepositoryAdapter;
 import com.diagramio.infrastructure.version.DiagramVersionRepositoryAdapter;
 import io.lettuce.core.ClientOptions;
 import io.lettuce.core.SocketOptions;
 import io.lettuce.core.TimeoutOptions;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Duration;
+import java.util.function.BooleanSupplier;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.data.redis.LettuceClientConfigurationBuilderCustomizer;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -29,9 +35,10 @@ import org.springframework.core.type.AnnotatedTypeMetadata;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
 
 /**
- * Cache sơ đồ (B2). Decorator cache được đăng ký làm {@code DiagramRepository}, {@code DiagramVersionRepository}
- * chính, nên domain service nhận nó mà không biết có cache. Chế độ {@code diagramio.cache.mode} chọn tầng nào được
- * dùng ({@code none} để so A/B với B1 trên cùng một file jar); Redis chỉ được kết nối khi chế độ có Redis.
+ * Cache sơ đồ (B2) và token chia sẻ (B3). Decorator cache được đăng ký làm {@code DiagramRepository},
+ * {@code DiagramVersionRepository}, {@code DiagramShareRepository} chính, nên domain service nhận nó mà không biết
+ * có cache. Chế độ {@code diagramio.cache.mode} chọn tầng nào được dùng ({@code none} để so A/B với B1 trên cùng một
+ * file jar); Redis chỉ được kết nối khi chế độ có Redis.
  */
 @Configuration
 @EnableConfigurationProperties(CacheProperties.class)
@@ -55,8 +62,34 @@ public class CacheConfig {
     @Bean
     @Primary
     public DiagramRepository cachingDiagramRepository(DiagramRepositoryAdapter adapter, DiagramCache cache,
-                                                      CacheProperties properties, MeterRegistry registry) {
-        return new CachingDiagramRepository(adapter, cache, properties.publicListTtl(), registry);
+                                                      CachingShareRepository shares, CacheProperties properties,
+                                                      MeterRegistry registry) {
+        return new CachingDiagramRepository(adapter, cache, properties.publicListTtl(), registry,
+                shares::beforeDiagramDelete);
+    }
+
+    /**
+     * Cache token chia sẻ (B3): chế độ local thì trong JVM, chế độ có Redis thì CHỈ trên Redis (không có bản trong
+     * JVM, để thu hồi có hiệu lực ngay ở mọi instance). Tắt khi mode=none hoặc share-tokens=false.
+     */
+    @Bean
+    @Primary
+    public CachingShareRepository cachingShareRepository(DiagramShareRepositoryAdapter adapter, DiagramCache cache,
+                                                         CacheProperties properties,
+                                                         ObjectProvider<RedisConnectionFactory> redis,
+                                                         MeterRegistry registry) {
+        DiagramCache.Mode mode = properties.mode();
+        ShareTokenStore store = null;
+        if (properties.shareTokens() && mode.usesRedis()) {
+            store = new RedisShareTokenStore(redis.getObject(), properties.shareTokenTtl(),
+                    properties.shareTokenNegativeTtl());
+        } else if (properties.shareTokens() && mode == DiagramCache.Mode.LOCAL) {
+            store = new LocalShareTokenStore(properties.shareTokenMaxEntries(), properties.shareTokenTtl(),
+                    properties.shareTokenNegativeTtl());
+        }
+        // Redis do bộ theo dõi của cache sơ đồ báo là không dùng được thì tra cứu đi thẳng CSDL
+        BooleanSupplier usable = mode.usesRedis() ? cache::remoteUp : () -> true;
+        return new CachingShareRepository(adapter, store, usable, registry);
     }
 
     @Bean

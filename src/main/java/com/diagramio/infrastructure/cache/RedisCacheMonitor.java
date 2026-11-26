@@ -20,6 +20,9 @@ import org.springframework.data.redis.listener.RedisMessageListenerContainer;
  * heartbeat gần đây của chính mình (lệnh ghi chạy được và thông báo hủy L1 tới được nơi); chỉ có L2 thì PING.
  * Kết quả được báo cho cache: không dùng được thì cache đọc thẳng CSDL, dùng lại được thì cache dọn dẹp trước khi
  * dùng lại. Như vậy khoảng thời gian một instance có thể dùng L1 đã lỡ thông báo hủy bị chặn ở vài nhịp theo dõi.
+ *
+ * <p>Việc đăng ký kênh pub/sub cũng chạy trong luồng theo dõi, không chạy lúc khởi động app: Redis chưa lên (hay đang
+ * khởi động lại) thì app vẫn khởi động và phục vụ bằng CSDL, đăng ký được thử lại ở mỗi nhịp cho tới khi thành công.
  */
 public final class RedisCacheMonitor implements SmartLifecycle {
 
@@ -35,7 +38,8 @@ public final class RedisCacheMonitor implements SmartLifecycle {
     private final AtomicLong sent = new AtomicLong();
     private volatile long received;
     private volatile boolean running;
-    private RedisMessageListenerContainer container;
+    /** Kênh pub/sub đã đăng ký được (null: chưa); sau đó nó tự đăng ký lại khi mất kết nối. */
+    private volatile RedisMessageListenerContainer container;
     private ScheduledExecutorService scheduler;
 
     public RedisCacheMonitor(DiagramCache cache, RedisDiagramTier tier, RedisConnectionFactory connectionFactory,
@@ -51,16 +55,6 @@ public final class RedisCacheMonitor implements SmartLifecycle {
     public synchronized void start() {
         if (running) {
             return;
-        }
-        if (listenForChanges) {
-            container = new RedisMessageListenerContainer();
-            container.setConnectionFactory(connectionFactory);
-            container.setRecoveryInterval(interval.toMillis());
-            container.setErrorHandler(e -> log.debug("Lỗi kênh pub/sub của cache sơ đồ: {}", e.toString()));
-            container.addMessageListener((Message message, byte[] pattern) -> onMessage(message.getBody()),
-                    new ChannelTopic(RedisDiagramTier.CHANGES_CHANNEL));
-            container.afterPropertiesSet();
-            container.start();
         }
         scheduler = Executors.newSingleThreadScheduledExecutor(runnable -> {
             Thread thread = new Thread(runnable, "diagram-cache-monitor");
@@ -82,6 +76,9 @@ public final class RedisCacheMonitor implements SmartLifecycle {
     }
 
     void check() {
+        if (listenForChanges && container == null) {
+            subscribe();
+        }
         boolean available;
         try {
             if (listenForChanges) {
@@ -101,6 +98,28 @@ public final class RedisCacheMonitor implements SmartLifecycle {
         }
     }
 
+    /**
+     * Đăng ký kênh thông báo thay đổi. Thất bại (Redis chưa lên, đang treo) thì bỏ container vừa tạo và để nhịp sau
+     * thử lại; trong lúc đó heartbeat không về nên cache vẫn đọc CSDL.
+     */
+    private void subscribe() {
+        RedisMessageListenerContainer candidate = new RedisMessageListenerContainer();
+        candidate.setConnectionFactory(connectionFactory);
+        candidate.setRecoveryInterval(interval.toMillis());
+        candidate.setErrorHandler(e -> log.debug("Lỗi kênh pub/sub của cache sơ đồ: {}", e.toString()));
+        candidate.addMessageListener((Message message, byte[] pattern) -> onMessage(message.getBody()),
+                new ChannelTopic(RedisDiagramTier.CHANGES_CHANNEL));
+        candidate.afterPropertiesSet();
+        try {
+            candidate.start();
+            container = candidate;
+            log.info("Đã đăng ký kênh thông báo thay đổi của cache sơ đồ trên Redis");
+        } catch (RuntimeException e) {
+            log.debug("Chưa đăng ký được kênh pub/sub của cache sơ đồ, sẽ thử lại: {}", e.toString());
+            destroy(candidate);
+        }
+    }
+
     @Override
     public synchronized void stop() {
         if (!running) {
@@ -108,13 +127,19 @@ public final class RedisCacheMonitor implements SmartLifecycle {
         }
         running = false;
         scheduler.shutdownNow();
-        if (container != null) {
-            try {
-                container.stop();
-                container.destroy();
-            } catch (Exception e) {
-                log.debug("Dừng kênh pub/sub của cache sơ đồ: {}", e.toString());
-            }
+        RedisMessageListenerContainer current = container;
+        container = null;
+        if (current != null) {
+            destroy(current);
+        }
+    }
+
+    private static void destroy(RedisMessageListenerContainer listenerContainer) {
+        try {
+            listenerContainer.stop();
+            listenerContainer.destroy();
+        } catch (Exception e) {
+            log.debug("Dừng kênh pub/sub của cache sơ đồ: {}", e.toString());
         }
     }
 

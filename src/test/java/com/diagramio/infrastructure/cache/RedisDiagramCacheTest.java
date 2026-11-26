@@ -177,6 +177,34 @@ class RedisDiagramCacheTest {
         assertThat(read(a, id).getVersion()).isEqualTo(2);
     }
 
+    @Test
+    void instanceStartedWhileRedisHangsServesFromTheDatabaseAndTakesOverWhenRedisIsBack() {
+        UUID id = UUID.randomUUID();
+        save(diagram(id, 1, "v1", false));
+        Instance late;
+        pauseRedis(true);
+        try {
+            long started = System.nanoTime();
+            late = instance();   // trước đây: ném lỗi ngay khi đăng ký pub/sub, app không khởi động được
+            assertThat(Duration.ofNanos(System.nanoTime() - started)).isLessThan(Duration.ofSeconds(2));
+            assertThat(late.cache().remoteUp()).isFalse();
+            int before = databaseReads.get();
+            assertThat(read(late, id).getVersion()).isEqualTo(1);
+            assertThat(databaseReads.get()).isEqualTo(before + 1);   // đọc CSDL, không chờ Redis
+        } finally {
+            pauseRedis(false);
+        }
+        try {
+            awaitTrue(() -> late.cache().remoteUp(), "the late instance uses Redis once it is back");
+            // Đã đăng ký kênh: thay đổi ở instance khác tới được nó
+            read(late, id);
+            a.cache().written(save(diagram(id, 2, "v2", false)));
+            awaitTrue(() -> read(late, id).getVersion() == 2, "the late instance sees changes from others");
+        } finally {
+            late.monitor().stop();
+        }
+    }
+
     // ------------------------------------------------------------------ helpers
 
     private Diagram save(Diagram diagram) {

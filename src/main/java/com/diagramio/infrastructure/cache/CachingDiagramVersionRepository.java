@@ -32,7 +32,8 @@ public final class CachingDiagramVersionRepository implements DiagramVersionRepo
         }
         this.versions = Caffeine.newBuilder()
                 .maximumWeight(maxBytes)
-                .weigher((UUID id, DiagramVersion v) -> 256 + v.data().json().length())
+                .weigher((UUID id, DiagramVersion v) ->
+                        (int) Math.min(Integer.MAX_VALUE, 256 + CachedDiagram.heapBytes(v.data().json())))
                 .recordStats()
                 .build();
         CaffeineCacheMetrics.monitor(registry, versions, "versions");

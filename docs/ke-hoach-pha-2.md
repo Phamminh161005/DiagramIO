@@ -626,6 +626,7 @@ Báo cáo kết quả trình bày mọi bài toán theo cùng một khung: kịc
   - [ ] Số đo C2, C3 trên Kaggle (ma trận `b12`)
 - [x] B3: cache token (Caffeine một instance, chỉ Redis nhiều instance), dấu "đang đổi" chặn lần nạp chậm, fail-closed 503, cache âm, E2E hai instance (QA-SEC1) ([ADR-0004](adr/0004-cache-token-chia-se.md))
   - [ ] Số đo trên Kaggle (ma trận `b3`)
+- [x] Rà soát và gia cố sau B3: giới hạn body 413, app khởi động khi Redis chết, bộ nhớ cache theo heap, một lượt Redis mỗi lần ghi, CI, image theo lớp ([ADR-0005](adr/0005-ra-soat-gia-co-sau-b3.md))
 - [ ] B4: Nginx, graceful shutdown, `docker-compose.scale.yml`, đo 1-2-3 instance, W7
 - [ ] B5: rate limit, bulkhead BCrypt, phát hiện refresh token bị dùng lại, W5
 - [ ] `ArchitectureTest` mở rộng; `AGENTS.md` cập nhật quy tắc pha 2

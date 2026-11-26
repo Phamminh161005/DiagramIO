@@ -158,6 +158,8 @@ Số liệu cho việc đo hiệu năng (Spring Boot Actuator) nằm trên cổn
 | `DIAGRAMIO_CACHE_MODE` | Cache sơ đồ: `none`, `local` (mặc định, không cần Redis), `redis`, `two-level` (Caffeine + Redis, khi chạy nhiều bản) |
 | `REDIS_PORT` | Cổng mở ra máy cho Redis (chỉ dùng ở chế độ `redis`, `two-level`) |
 | `DIAGRAMIO_CACHE_SHARE_TOKENS` | `true` (mặc định) hoặc `false`: bật/tắt cache tra cứu token link chia sẻ |
+| `DIAGRAMIO_HTTP_MAX_REQUEST_SIZE` | Body request lớn nhất (mặc định `4MB`); lớn hơn thì 413, không đọc |
+| `JAVA_TOOL_OPTIONS` | Cờ JVM trong container; image đặt sẵn `-XX:MaxRAMPercentage=75 -XX:+ExitOnOutOfMemoryError` |
 
 Thử nhanh bằng `curl`:
 
@@ -170,6 +172,7 @@ curl -s -X POST localhost:8080/api/v1/diagrams -H "Authorization: Bearer $TOKEN"
 
 Một số việc thường làm khác:
 
+- CI (GitHub Actions, `.github/workflows/ci.yml`) chạy toàn bộ test, `shellcheck` các script bộ đo và build image Docker ở mỗi pull request.
 - Chạy test: `./mvnw test` (cần Docker đang chạy). Có ba nhóm test:
   - Unit test và test controller (MockMvc): chạy được ở mọi máy.
   - Test CSDL và Redis trong `infrastructure` (Testcontainers): không có Docker thì tự bỏ qua. `RedisDiagramCacheTest` thử cả trường hợp Redis bị treo giữa chừng (`docker pause`).
@@ -261,7 +264,7 @@ Toàn bộ hệ thống gồm ứng dụng Spring Boot (Java 21), CSDL PostgreSQ
 
 ## 7. Hướng cải tiến cho pha 2
 
-> Kế hoạch chi tiết: [docs/ke-hoach-pha-2.md](docs/ke-hoach-pha-2.md). Đã làm: M0 (phép đo, [ADR-0001](docs/adr/0001-phuong-phap-do.md)), B1 (truy cập dữ liệu, [ADR-0002](docs/adr/0002-toi-uu-truy-cap-du-lieu.md)), B2 (cache hai tầng, ETag/304, [ADR-0003](docs/adr/0003-cache-hai-tang-etag.md)), B3 (cache token link chia sẻ, thu hồi có hiệu lực ngay, [ADR-0004](docs/adr/0004-cache-token-chia-se.md)). Bảng dưới là phân tích ban đầu của pha 1.
+> Kế hoạch chi tiết: [docs/ke-hoach-pha-2.md](docs/ke-hoach-pha-2.md). Đã làm: M0 (phép đo, [ADR-0001](docs/adr/0001-phuong-phap-do.md)), B1 (truy cập dữ liệu, [ADR-0002](docs/adr/0002-toi-uu-truy-cap-du-lieu.md)), B2 (cache hai tầng, ETag/304, [ADR-0003](docs/adr/0003-cache-hai-tang-etag.md)), B3 (cache token link chia sẻ, thu hồi có hiệu lực ngay, [ADR-0004](docs/adr/0004-cache-token-chia-se.md)), rà soát và gia cố sau B3 (giới hạn body, khởi động khi Redis chết, bộ nhớ cache, CI, image, [ADR-0005](docs/adr/0005-ra-soat-gia-co-sau-b3.md)). Bảng dưới là phân tích ban đầu của pha 1.
 
 Baseline cố ý chưa tối ưu. Các hướng dưới đây đều đo được trước và sau bằng cùng kịch bản ở mục 6.
 

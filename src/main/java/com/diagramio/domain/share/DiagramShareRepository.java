@@ -27,6 +27,9 @@ public interface DiagramShareRepository {
      */
     Optional<DiagramShare> updateRole(UUID shareId, UUID diagramId, ShareRole role);
 
-    /** Thu hồi bằng một câu DELETE có điều kiện; false nếu link không có hoặc thuộc sơ đồ khác. */
-    boolean deleteByIdAndDiagramId(UUID shareId, UUID diagramId);
+    /**
+     * Thu hồi bằng một câu DELETE có điều kiện và trả link vừa xóa (cache cần token của nó để bỏ khỏi cache).
+     * Rỗng nếu link không có hoặc thuộc sơ đồ khác.
+     */
+    Optional<DiagramShare> deleteByIdAndDiagramId(UUID shareId, UUID diagramId);
 }

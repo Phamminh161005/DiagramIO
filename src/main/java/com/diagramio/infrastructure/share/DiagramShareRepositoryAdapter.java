@@ -10,16 +10,22 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.dao.DuplicateKeyException;
+import org.springframework.jdbc.core.RowMapper;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Repository;
 
 /**
  * Cài đặt DiagramShareRepository: đọc bằng JPA, ghi bằng một câu SQL mỗi thao tác (thêm không qua merge, đổi quyền
- * trả luôn dòng đã đổi, thu hồi có điều kiện thuộc sơ đồ).
+ * và thu hồi có điều kiện thuộc sơ đồ, trả luôn dòng đã đổi hoặc đã xóa).
  */
 @Repository
 public class DiagramShareRepositoryAdapter implements DiagramShareRepository {
+
+    private static final String COLUMNS = "id, diagram_id, share_token, role, created_at";
+    private static final RowMapper<DiagramShare> SHARE = (rs, n) -> new DiagramShare(
+            rs.getObject("id", UUID.class), rs.getObject("diagram_id", UUID.class), rs.getString("share_token"),
+            ShareRole.from(rs.getString("role")), rs.getObject("created_at", OffsetDateTime.class).toInstant());
 
     private final DiagramShareJpaRepository jpaRepository;
     private final DiagramShareMapper mapper;
@@ -69,15 +75,13 @@ public class DiagramShareRepositoryAdapter implements DiagramShareRepository {
                 .addValue("diagramId", diagramId)
                 .addValue("role", role.value());
         return jdbc.query("UPDATE diagram_shares SET role = :role WHERE id = :id AND diagram_id = :diagramId"
-                + " RETURNING id, diagram_id, share_token, role, created_at", params, (rs, n) -> new DiagramShare(
-                rs.getObject("id", UUID.class), rs.getObject("diagram_id", UUID.class), rs.getString("share_token"),
-                ShareRole.from(rs.getString("role")), rs.getObject("created_at", OffsetDateTime.class).toInstant()))
-                .stream().findFirst();
+                + " RETURNING " + COLUMNS, params, SHARE).stream().findFirst();
     }
 
     @Override
-    public boolean deleteByIdAndDiagramId(UUID shareId, UUID diagramId) {
-        return jdbc.update("DELETE FROM diagram_shares WHERE id = :id AND diagram_id = :diagramId",
-                new MapSqlParameterSource().addValue("id", shareId).addValue("diagramId", diagramId)) == 1;
+    public Optional<DiagramShare> deleteByIdAndDiagramId(UUID shareId, UUID diagramId) {
+        return jdbc.query("DELETE FROM diagram_shares WHERE id = :id AND diagram_id = :diagramId RETURNING " + COLUMNS,
+                new MapSqlParameterSource().addValue("id", shareId).addValue("diagramId", diagramId), SHARE)
+                .stream().findFirst();
     }
 }

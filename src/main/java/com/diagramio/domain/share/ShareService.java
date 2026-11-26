@@ -80,7 +80,7 @@ public class ShareService {
      */
     public void revokeShare(UUID diagramId, UUID shareId, Caller caller) {
         access.require(diagramId, caller, Permission.MANAGE);
-        if (!shareRepository.deleteByIdAndDiagramId(shareId, diagramId)) {
+        if (shareRepository.deleteByIdAndDiagramId(shareId, diagramId).isEmpty()) {
             throw new NotFoundException("Share link not found");
         }
     }

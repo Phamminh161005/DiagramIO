@@ -375,11 +375,12 @@ class JpaRepositoriesIntegrationTest {
     @Test
     void roleUpdateAfterRevokeDoesNotRecreateTheLink() {
         DiagramShare share = newShare(newDiagram("Shop ERD", DiagramType.ERD, false, T0).getId());
-        assertThat(shareRepository.deleteByIdAndDiagramId(share.getId(), share.getDiagramId())).isTrue();
+        assertThat(shareRepository.deleteByIdAndDiagramId(share.getId(), share.getDiagramId())).get()
+                .extracting(DiagramShare::getShareToken).isEqualTo(share.getShareToken());
 
         assertThat(shareRepository.updateRole(share.getId(), share.getDiagramId(), ShareRole.EDIT)).isEmpty();
         assertThat(shareRepository.findByShareToken(share.getShareToken())).isEmpty();
-        assertThat(shareRepository.deleteByIdAndDiagramId(share.getId(), share.getDiagramId())).isFalse();
+        assertThat(shareRepository.deleteByIdAndDiagramId(share.getId(), share.getDiagramId())).isEmpty();
     }
 
     @Test
@@ -388,7 +389,7 @@ class JpaRepositoriesIntegrationTest {
         UUID other = newDiagram("Other", DiagramType.ERD, false, T0).getId();
 
         assertThat(shareRepository.updateRole(share.getId(), other, ShareRole.EDIT)).isEmpty();
-        assertThat(shareRepository.deleteByIdAndDiagramId(share.getId(), other)).isFalse();
+        assertThat(shareRepository.deleteByIdAndDiagramId(share.getId(), other)).isEmpty();
         assertThat(shareRepository.findByShareToken(share.getShareToken())).get()
                 .extracting(DiagramShare::getRole).isEqualTo(ShareRole.VIEW);
     }

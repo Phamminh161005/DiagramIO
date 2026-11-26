@@ -2,10 +2,12 @@
 # Chạy một ma trận đo trọn vẹn trong một phiên: ghi cấu hình máy, build jar từng cấu hình, tạo CSDL mẫu,
 # chạy mọi phép đo (lặp REPS lần, xen kẽ các cấu hình trong mỗi vòng), cuối cùng tổng hợp báo cáo.
 #
-#   bash bench/kaggle/run_matrix.sh [b12|tune|m0|quick]
+#   bash bench/kaggle/run_matrix.sh [b12|b3|tune|m0|quick]
 #
 # b12    C0 (v2.0-m0), C1 (B1, tag v2.1-b1), C2 (B2, cache Caffeine), C3 (B2, Caffeine + Redis): W1, W2, W3 và
 #        EXPLAIN của C0, C1; mỗi phép đo 3 lần, khoảng 8-9 giờ trên Kaggle (REPS=2: khoảng 6 giờ)
+# b3     phần đóng góp của B3 (cache token chia sẻ) trên nền B2, cùng một jar bật/tắt bằng cờ: C2, C3 không có cache
+#        token; C2b3, C3b3 có; W2 400 req/s và sức chứa, mỗi phép đo 2 lần, khoảng 2,5 giờ
 # tune   tinh chỉnh runtime của B1, mỗi lần một biến: pool Hikari 10 (mặc định) / 20, virtual threads; W2
 # m0     cấu hình C0 (hiện trạng), kịch bản W1-W3, mỗi phép đo 3 lần: khoảng 3-4 giờ trên Kaggle
 # quick  chạy thử vài phút với dữ liệu nhỏ, để kiểm tra môi trường (gồm Redis, EXPLAIN) trước khi chạy thật
@@ -39,6 +41,19 @@ case "$matrix" in
       "w3 capacity auto RATE_START=10 RATE_STEP=20 RATE_MAX=600 MAX_VUS=300"
     )
     PROFILE_PLAN=("w2 fixed 400" "w3 fixed 20 MAX_VUS=200")
+    ;;
+  b3)
+    CONFIGS=(C2 C2b3 C3 C3b3)
+    DEFAULT_ARGS=([C2]="--diagramio.cache.mode=local --diagramio.cache.share-tokens=false"
+                  [C2b3]="--diagramio.cache.mode=local"
+                  [C3]="--diagramio.cache.mode=two-level --diagramio.cache.share-tokens=false"
+                  [C3b3]="--diagramio.cache.mode=two-level")
+    : "${REPS:=2}" "${SCALE:=1.0}" "${WARMUP:=60}" "${MEASURE:=180}"
+    PLAN=(
+      "w2 fixed 400"
+      "w2 capacity auto RATE_START=100 RATE_STEP=100 RATE_MAX=3000 MAX_VUS=1000"
+    )
+    PROFILE_PLAN=("w2 fixed 400")
     ;;
   tune)
     CONFIGS=(C1 C1pool20 C1vt)
@@ -87,7 +102,7 @@ case "$matrix" in
     PROFILE_PLAN=("w2 fixed 50 MAX_VUS=100 PRE_VUS=20")
     ;;
   *)
-    die "ma trận không có: $matrix (b12 | tune | m0 | quick)"
+    die "ma trận không có: $matrix (b12 | b3 | tune | m0 | quick)"
     ;;
 esac
 export WARMUP MEASURE

@@ -13,7 +13,7 @@ bench/
 │   ├── prepare_data.sh        tạo CSDL mẫu: schema bằng Flyway của app, dữ liệu sinh xác định
 │   ├── run_one.sh             một lần đo: reset CSDL và Redis, chạy app, thu số liệu, chạy k6
 │   ├── explain.sh             EXPLAIN (ANALYZE, BUFFERS) các truy vấn danh sách, tìm kiếm, link, lịch sử
-│   └── run_matrix.sh          chạy cả một ma trận đo (b12, tune, m0, quick) rồi tổng hợp báo cáo
+│   └── run_matrix.sh          chạy cả một ma trận đo (b12, b3, tune, m0, quick) rồi tổng hợp báo cáo
 ├── seed/gen.py                sinh dữ liệu xác định theo seed (CSV cho COPY, fixture cho k6)
 ├── k6/                        kịch bản tải: w1.js (chuỗi của pha 1), w2.js (hỗn hợp đọc/ghi; W3 = W2 sơ đồ lớn)
 ├── collect/                   thu số liệu phía server: CPU theo tiến trình, Prometheus của app, thống kê PostgreSQL
@@ -34,6 +34,7 @@ Số câu SQL mỗi request không phụ thuộc phần cứng nên được đo
 3. Ở ô đầu tiên, đặt `REPO_URL`, `REF` (commit hoặc tag có thư mục `bench/`), `MATRIX` và `REPS`.
 4. Chạy ở chế độ nền để không phụ thuộc trình duyệt: **Save Version → Save & Run All (Commit)**. Thời gian (giới hạn của Kaggle là 12 giờ):
    - `b12`: C0 (`v2.0-m0`), C1 (B1, `v2.1-b1`), C2 (B2, cache `local`), C3 (B2, cache `two-level`) xen kẽ: khoảng 8-9 giờ với `REPS=3`, khoảng 6 giờ với `REPS=2`;
+   - `b3`: phần đóng góp của B3 (cache token chia sẻ) trên nền B2, cùng một jar bật/tắt bằng `diagramio.cache.share-tokens`: C2, C3 (không cache token) so với C2b3, C3b3; khoảng 2,5 giờ;
    - `tune`: tinh chỉnh runtime của B1 (pool Hikari 20, virtual threads), khoảng 1,5 giờ;
    - `m0`: chỉ C0, khoảng 3,5 giờ.
 5. Khi xong, tải `results.tgz` trong tab **Output**, giải nén vào `bench/results/` của repo, rồi commit các file tóm tắt (mục 5).

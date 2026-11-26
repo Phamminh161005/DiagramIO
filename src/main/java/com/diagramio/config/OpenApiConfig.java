@@ -38,7 +38,9 @@ public class OpenApiConfig {
                         .version("v1")
                         .description("REST API cho dịch vụ vẽ sơ đồ UML/ERD trực tuyến. "
                                 + "Đăng nhập lấy access token (bearerAuth), hoặc dùng token của link chia sẻ "
-                                + "qua header X-Share-Token (shareToken) để xem/sửa sơ đồ được chia sẻ."))
+                                + "qua header X-Share-Token (shareToken) để xem/sửa sơ đồ được chia sẻ. "
+                                + "Mọi endpoint: body lớn hơn 4 MB bị từ chối với mã 413 trước khi được đọc "
+                                + "(giới hạn 2 MB của data vẫn trả 400)."))
                 // URL tương đối: Swagger UI gọi đúng host đang mở nó (máy dev, Docker, sau proxy),
                 // và docs/openapi.yaml xuất lại không phụ thuộc cổng đang chạy
                 .servers(List.of(new Server().url("/").description("Cùng host với Swagger UI")))

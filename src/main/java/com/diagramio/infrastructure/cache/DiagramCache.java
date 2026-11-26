@@ -239,11 +239,10 @@ public final class DiagramCache {
         if (remote != null) {
             writeRemote(entry.id(), () -> {
                 if (cacheable) {
-                    remote.putIfNewer(entry);
+                    remote.putIfNewerAndPublish(entry, instanceId);
                 } else {
-                    remote.delete(entry.id());
+                    remote.deleteAndPublish(entry.id(), entry.version(), instanceId);
                 }
-                remote.publishChange(entry.id(), entry.version(), instanceId);
             });
         }
     }
@@ -258,10 +257,7 @@ public final class DiagramCache {
             local.putIfNewer(tombstone);
         }
         if (remote != null) {
-            writeRemote(id, () -> {
-                remote.putIfNewer(tombstone);
-                remote.publishChange(id, CachedDiagram.TOMBSTONE_VERSION, instanceId);
-            });
+            writeRemote(id, () -> remote.putIfNewerAndPublish(tombstone, instanceId));
         }
     }
 

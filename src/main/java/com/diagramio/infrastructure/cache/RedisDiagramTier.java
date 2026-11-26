@@ -35,15 +35,29 @@ public final class RedisDiagramTier {
     private static final byte[] DATA = bytes("d");
     private static final byte[] DELETED = bytes("-");
 
-    /** KEYS[1] khóa; ARGV: version, phần đầu, data, TTL (ms). Trả 1 nếu đã ghi, 0 nếu đang có bản mới hơn. */
+    /**
+     * KEYS[1] khóa; ARGV: version, phần đầu, data, TTL (ms), [kênh, tin]. Trả 1 nếu đã ghi, 0 nếu đang có bản mới
+     * hơn. Có kênh thì publish tin trong cùng script (dù có ghi hay không: CSDL đã đổi, instance khác cần bỏ bản cũ
+     * hơn), nên một lần ghi sơ đồ chỉ tốn một lượt tới Redis.
+     */
     private static final RedisScript<Long> PUT_IF_NEWER = new DefaultRedisScript<>("""
+            local stored = 0
             local current = redis.call('HGET', KEYS[1], 'v')
-            if current and tonumber(current) >= tonumber(ARGV[1]) then
-              return 0
+            if not current or tonumber(current) < tonumber(ARGV[1]) then
+              redis.call('HSET', KEYS[1], 'v', ARGV[1], 'h', ARGV[2], 'd', ARGV[3])
+              redis.call('PEXPIRE', KEYS[1], ARGV[4])
+              stored = 1
             end
-            redis.call('HSET', KEYS[1], 'v', ARGV[1], 'h', ARGV[2], 'd', ARGV[3])
-            redis.call('PEXPIRE', KEYS[1], ARGV[4])
-            return 1
+            if #ARGV >= 6 then
+              redis.call('PUBLISH', ARGV[5], ARGV[6])
+            end
+            return stored
+            """, Long.class);
+
+    /** KEYS[1] khóa; ARGV: kênh, tin. Xóa mục rồi publish, một lượt tới Redis. */
+    private static final RedisScript<Long> DELETE_AND_PUBLISH = new DefaultRedisScript<>("""
+            redis.call('DEL', KEYS[1])
+            return redis.call('PUBLISH', ARGV[1], ARGV[2])
             """, Long.class);
 
     private final RedisTemplate<String, byte[]> redis;
@@ -96,13 +110,28 @@ public final class RedisDiagramTier {
                 : Optional.of(new DiagramAccessInfo(id, header.ownerId, header.isPublic, header.version)));
     }
 
-    /** Ghi nếu Redis chưa có bản mới hơn; trả true nếu đã ghi. */
+    /** Ghi nếu Redis chưa có bản mới hơn (nạp từ CSDL, không phải thay đổi); trả true nếu đã ghi. */
     public boolean putIfNewer(CachedDiagram entry) {
+        return put(entry, null);
+    }
+
+    /**
+     * Sơ đồ vừa đổi trong CSDL: ghi nếu Redis chưa có bản mới hơn và báo cho instance khác, trong một script.
+     * Trả true nếu đã ghi.
+     */
+    public boolean putIfNewerAndPublish(CachedDiagram entry, String origin) {
+        return put(entry, changeMessage(entry.id(), entry.version(), origin));
+    }
+
+    private boolean put(CachedDiagram entry, byte[] message) {
         byte[] header = entry.deleted() ? DELETED : Header.encode(entry);
         byte[] data = entry.deleted() ? new byte[0] : entry.data().json().getBytes(StandardCharsets.UTF_8);
         long ttlMillis = (entry.deleted() ? tombstoneTtl : ttl).toMillis();
-        Long stored = redis.execute(PUT_IF_NEWER, List.of(key(entry.id())),
-                bytes(Integer.toString(entry.version())), header, data, bytes(Long.toString(ttlMillis)));
+        byte[][] args = message == null
+                ? new byte[][] {bytes(Integer.toString(entry.version())), header, data, bytes(Long.toString(ttlMillis))}
+                : new byte[][] {bytes(Integer.toString(entry.version())), header, data, bytes(Long.toString(ttlMillis)),
+                        bytes(CHANGES_CHANNEL), message};
+        Long stored = redis.execute(PUT_IF_NEWER, List.of(key(entry.id())), (Object[]) args);
         return stored != null && stored == 1L;
     }
 
@@ -110,9 +139,18 @@ public final class RedisDiagramTier {
         redis.delete(key(id));
     }
 
+    /** Bỏ mục (sơ đồ vừa đổi nhưng quá lớn để cache) và báo cho instance khác, trong một script. */
+    public void deleteAndPublish(UUID id, int version, String origin) {
+        redis.execute(DELETE_AND_PUBLISH, List.of(key(id)), bytes(CHANGES_CHANNEL), changeMessage(id, version, origin));
+    }
+
     /** Báo cho các instance khác: sơ đồ {@code id} vừa có version {@code version} (bia mộ: lớn nhất). */
     public void publishChange(UUID id, int version, String origin) {
-        redis.convertAndSend(CHANGES_CHANNEL, bytes(id + " " + version + " " + origin));
+        redis.convertAndSend(CHANGES_CHANNEL, changeMessage(id, version, origin));
+    }
+
+    private static byte[] changeMessage(UUID id, int version, String origin) {
+        return bytes(id + " " + version + " " + origin);
     }
 
     /**

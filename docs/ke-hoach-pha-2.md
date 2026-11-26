@@ -624,7 +624,8 @@ Báo cáo kết quả trình bày mọi bài toán theo cùng một khung: kịc
 - [x] B2: decorator cache, write-through có so version, bia mộ, pub/sub hủy L1 kèm heartbeat, chạy tiếp bằng CSDL khi Redis hỏng, ETag/304 ([ADR-0003](adr/0003-cache-hai-tang-etag.md))
   - Micro-cache danh sách công khai: có nhưng tắt mặc định (lý do ở ADR-0003 mục 4)
   - [ ] Số đo C2, C3 trên Kaggle (ma trận `b12`)
-- [ ] B3: cache token trên Redis, thu hồi tức thì, E2E hai instance
+- [x] B3: cache token (Caffeine một instance, chỉ Redis nhiều instance), dấu "đang đổi" chặn lần nạp chậm, fail-closed 503, cache âm, E2E hai instance (QA-SEC1) ([ADR-0004](adr/0004-cache-token-chia-se.md))
+  - [ ] Số đo trên Kaggle (ma trận `b3`)
 - [ ] B4: Nginx, graceful shutdown, `docker-compose.scale.yml`, đo 1-2-3 instance, W7
 - [ ] B5: rate limit, bulkhead BCrypt, phát hiện refresh token bị dùng lại, W5
 - [ ] `ArchitectureTest` mở rộng; `AGENTS.md` cập nhật quy tắc pha 2

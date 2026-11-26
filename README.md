@@ -1,11 +1,13 @@
 # DiagramIO
 
-DiagramIO là backend REST API (JSON) cho một web vẽ sơ đồ UML và ERD trực tuyến: quản lý tài khoản, lưu trữ sơ đồ, lịch sử phiên bản và chia sẻ sơ đồ qua link. Đây là bài tập lớn môn Kiến trúc phần mềm, pha 1. Bản này là baseline, ưu tiên chạy đúng và đơn giản; hiệu năng được đo trên Kaggle CPU để làm mốc so sánh cho pha 2.
+[![CI](https://github.com/vietsosad/DiagramIO_16/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/vietsosad/DiagramIO_16/actions/workflows/ci.yml)
+
+DiagramIO là backend REST API (JSON) cho một web vẽ sơ đồ UML và ERD trực tuyến: quản lý tài khoản, lưu trữ sơ đồ, lịch sử phiên bản và chia sẻ sơ đồ qua link. Đây là bài tập lớn môn Kiến trúc phần mềm. Pha 1 là baseline, ưu tiên chạy đúng và đơn giản. Pha 2 cải tiến kiến trúc theo [kế hoạch pha 2](docs/ke-hoach-pha-2.md), mỗi cải tiến có số đo trước và sau trên Kaggle CPU; tiến độ ở mục 7, lý do của từng quyết định trong [docs/adr/](docs/adr/).
 
 | Thành viên | Phụ trách |
 |---|---|
 | Hoàng Gia Bảo | Quản lý sơ đồ |
-| Phạm Minh | Khung dự án, xác thực người dùng
+| Phạm Minh | Khung dự án, xác thực người dùng |
 | Chí Long | Lịch sử phiên bản |
 | Hưng Hoàng | Chia sẻ và phân quyền |
 

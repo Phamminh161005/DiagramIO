@@ -184,7 +184,8 @@ class ShareServiceTest {
     void revokeShare_Success() {
         UUID shareId = UUID.randomUUID();
         stubOwnerInfo();
-        when(shareRepository.deleteByIdAndDiagramId(shareId, diagramId)).thenReturn(true);
+        when(shareRepository.deleteByIdAndDiagramId(shareId, diagramId)).thenReturn(
+                Optional.of(new DiagramShare(shareId, diagramId, "token123", ShareRole.VIEW, Instant.now())));
 
         shareService.revokeShare(diagramId, shareId, Caller.user(ownerId));
 
@@ -196,7 +197,7 @@ class ShareServiceTest {
     void revokeShare_UnknownOrOtherDiagramIs404() {
         UUID shareId = UUID.randomUUID();
         stubOwnerInfo();
-        when(shareRepository.deleteByIdAndDiagramId(shareId, diagramId)).thenReturn(false);
+        when(shareRepository.deleteByIdAndDiagramId(shareId, diagramId)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> shareService.revokeShare(diagramId, shareId, Caller.user(ownerId)))
                 .isInstanceOf(NotFoundException.class)

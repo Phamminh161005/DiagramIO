@@ -81,6 +81,10 @@
   - The cache only accepts a newer `version` (version-checked write-through); deletes leave a tombstone. Do not add plain "put" or "evict then reload" paths.
   - Cache entries are immutable (`CachedDiagram`); callers always get a new `Diagram`.
   - A conditional GET checks access before answering 304; never return 304 to a caller without the permission.
+- Share-token lookups are cached too (ADR-0004; `diagramio.cache.share-tokens`): in JVM for `local`, only in Redis for `redis`/`two-level`. Keep its invariants:
+  - Cache keys are the SHA-256 of the token; never store a raw token in a cache.
+  - Every change to a link (role, revocation) goes through `DiagramShareRepository`, which marks the link as changing BEFORE the database change and drops the key after commit. If the marker cannot be written, do not change the link (503). Never add a path that changes `diagram_shares` without the marker.
+  - The change marker must live at least as long as a cached positive entry; lookups fall back to the database when the cache fails, never allow a token that could not be checked.
 - Use transactions by rule, not everywhere. Domain services get them through the `TransactionRunner` port:
 
 | Operation | Transaction | Example |

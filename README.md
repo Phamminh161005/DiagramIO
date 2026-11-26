@@ -28,7 +28,7 @@ Pha 1 không làm: giao diện frontend và canvas; cộng tác thời gian th�
 |---|---|
 | Ngôn ngữ, framework | Java 21, Spring Boot 3.4 (Web, Validation, Security) |
 | CSDL | PostgreSQL 16, Flyway quản lý schema; Spring Data JPA cho tài khoản, token, link; SQL viết tay (`NamedParameterJdbcTemplate`) cho sơ đồ và phiên bản |
-| Cache | Caffeine trong JVM; Redis 7 (Lettuce) dùng chung khi chạy nhiều bản; ETag và 304 |
+| Cache | Caffeine trong JVM; Redis 7 (Lettuce) dùng chung khi chạy nhiều bản; ETag và 304; cache token link chia sẻ |
 | Đo lường | Spring Boot Actuator, Micrometer Prometheus (cổng quản trị riêng, chỉ localhost); bộ đo k6 trong `bench/` |
 | Xác thực | JWT (jjwt), BCrypt, refresh token lưu dạng SHA-256 |
 | Tài liệu API | springdoc-openapi (Swagger UI) |
@@ -70,6 +70,7 @@ Một số điểm thiết kế chính:
 - Dữ liệu sơ đồ là kiểu `DiagramData` (kiểm tra cấu trúc và 2 MB khi tạo từ request), loại sơ đồ là enum `DiagramType`. `Diagram` tách metadata (`updateMetadata`) khỏi nội dung (`replaceContent`); mọi thay đổi nội dung, kể cả khôi phục phiên bản, đi qua `replaceContent`. Đây là chỗ nối cho pha 2 (sửa theo thao tác, sự kiện, cache).
 - Chống ghi đè khi nhiều người cùng sửa bằng optimistic locking: sửa sơ đồ là một câu `UPDATE ... WHERE version = :expected`, không khớp thì 409. Lưu và khôi phục phiên bản khóa dòng sơ đồ (`SELECT ... FOR UPDATE`) để các yêu cầu đồng thời xếp hàng, và chép `data` ngay trong CSDL.
 - Đường đọc có cache hai tầng ([ADR-0003](docs/adr/0003-cache-hai-tang-etag.md)): decorator của repository, ghi CSDL rồi ghi trạng thái mới vào cache sau commit, chỉ khi version mới hơn; chế độ chọn bằng `DIAGRAMIO_CACHE_MODE` (`none`, `local` mặc định, `redis`, `two-level` khi chạy nhiều bản). `GET` sơ đồ trả `ETag`, client gửi lại trong `If-None-Match` thì nhận 304 (sau khi đã kiểm tra quyền).
+- Tra cứu token link chia sẻ cũng được cache ([ADR-0004](docs/adr/0004-cache-token-chia-se.md)): khóa là SHA-256 của token; nhiều bản app thì chỉ cache trên Redis. Thu hồi và đổi quyền có hiệu lực ngay ở request tiếp theo, mọi bản app; không bảo đảm được điều đó (Redis lỗi) thì thao tác trả 503 thay vì có hiệu lực trễ.
 - Schema CSDL do Flyway quản lý, Hibernate chỉ kiểm tra schema khớp với entity (`ddl-auto: validate`). CSDL gồm năm bảng: `users`, `refresh_tokens`, `diagrams`, `diagram_versions`, `diagram_shares`.
 
 ## 4. Đặc tả API
@@ -156,6 +157,7 @@ Số liệu cho việc đo hiệu năng (Spring Boot Actuator) nằm trên cổn
 | `JWT_SECRET` | Khóa ký JWT, ít nhất 32 ký tự; bắt buộc đổi khi triển khai thật |
 | `DIAGRAMIO_CACHE_MODE` | Cache sơ đồ: `none`, `local` (mặc định, không cần Redis), `redis`, `two-level` (Caffeine + Redis, khi chạy nhiều bản) |
 | `REDIS_PORT` | Cổng mở ra máy cho Redis (chỉ dùng ở chế độ `redis`, `two-level`) |
+| `DIAGRAMIO_CACHE_SHARE_TOKENS` | `true` (mặc định) hoặc `false`: bật/tắt cache tra cứu token link chia sẻ |
 
 Thử nhanh bằng `curl`:
 
@@ -173,7 +175,7 @@ Một số việc thường làm khác:
   - Test CSDL và Redis trong `infrastructure` (Testcontainers): không có Docker thì tự bỏ qua. `RedisDiagramCacheTest` thử cả trường hợp Redis bị treo giữa chừng (`docker pause`).
   - Test E2E hộp đen trong `src/test/java/com/diagramio/e2e`: khởi động cả app trên cổng ngẫu nhiên với PostgreSQL thật và chỉ gọi API qua HTTP, kiểm tra mọi endpoint với từng vai trò (chủ, link edit, link view, người khác, khách). Nhóm này cố ý báo lỗi khi không có Docker để không "xanh giả". Chạy riêng: `./mvnw test -Dtest='com.diagramio.e2e.**'`; bỏ qua: `./mvnw test -Dtest='!com.diagramio.e2e.**'`.
   - `SqlPerRequestE2eTest` (trong nhóm E2E) đếm câu SQL, transaction và số lần chở `data` của từng endpoint, ghi bảng ra `target/bench/sql-per-request.md`; thay đổi làm đổi các con số này thì sửa con số trong test cùng PR. Test này chạy với `diagramio.cache.mode=none` (đo truy cập CSDL, không đo cache).
-  - `CacheE2eTest` kiểm tra ETag, 304 và cache ở chế độ mặc định; `TwoInstanceCacheE2eTest` chạy hai bản app thật dùng chung PostgreSQL và Redis ở chế độ `two-level`.
+  - `CacheE2eTest` kiểm tra ETag, 304 và cache ở chế độ mặc định; `ShareTokenCacheE2eTest` kiểm tra cache token (đọc qua link không tốn câu SQL nào, thu hồi có hiệu lực ngay); `TwoInstanceCacheE2eTest` chạy hai bản app thật dùng chung PostgreSQL và Redis ở chế độ `two-level`, gồm cả thu hồi ở bản này, dùng token ở bản kia.
   - Dùng JDK mới hơn 21 (ví dụ 25) thì thêm `-DargLine="-Dnet.bytebuddy.experimental=true"` để Mockito chạy được.
 - Xuất lại đặc tả API sau khi đổi endpoint (app đang chạy): `curl -o docs/openapi.yaml http://localhost:8080/v3/api-docs.yaml`. Khóa được sắp xếp cố định và server là URL tương đối, nên file chỉ thay đổi khi API thay đổi; diff khác rỗng nghĩa là phải commit lại file này.
 - Thay đổi CSDL: thêm file migration mới dạng `V<số>__mo_ta.sql` (hai dấu gạch dưới) trong `src/main/resources/db/migration`, không sửa các file đã có.
@@ -259,7 +261,7 @@ Toàn bộ hệ thống gồm ứng dụng Spring Boot (Java 21), CSDL PostgreSQ
 
 ## 7. Hướng cải tiến cho pha 2
 
-> Kế hoạch chi tiết: [docs/ke-hoach-pha-2.md](docs/ke-hoach-pha-2.md). Đã làm: M0 (phép đo, [ADR-0001](docs/adr/0001-phuong-phap-do.md)), B1 (truy cập dữ liệu, [ADR-0002](docs/adr/0002-toi-uu-truy-cap-du-lieu.md)), B2 (cache hai tầng, ETag/304, [ADR-0003](docs/adr/0003-cache-hai-tang-etag.md)). Bảng dưới là phân tích ban đầu của pha 1.
+> Kế hoạch chi tiết: [docs/ke-hoach-pha-2.md](docs/ke-hoach-pha-2.md). Đã làm: M0 (phép đo, [ADR-0001](docs/adr/0001-phuong-phap-do.md)), B1 (truy cập dữ liệu, [ADR-0002](docs/adr/0002-toi-uu-truy-cap-du-lieu.md)), B2 (cache hai tầng, ETag/304, [ADR-0003](docs/adr/0003-cache-hai-tang-etag.md)), B3 (cache token link chia sẻ, thu hồi có hiệu lực ngay, [ADR-0004](docs/adr/0004-cache-token-chia-se.md)). Bảng dưới là phân tích ban đầu của pha 1.
 
 Baseline cố ý chưa tối ưu. Các hướng dưới đây đều đo được trước và sau bằng cùng kịch bản ở mục 6.
 

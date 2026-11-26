@@ -240,6 +240,12 @@ def run_metrics(run: Run) -> dict:
             hits = run.counter_delta(metric, window, lambda labels: "cache=diagrams" in labels and "result=hit" in labels)
             misses = run.counter_delta(metric, window, lambda labels: "cache=diagrams" in labels and "result=miss" in labels)
             m[f"hit_{level}"] = hits / (hits + misses) if hits is not None and misses is not None and hits + misses else None
+        # Cache token chia sẻ (B3): trúng gồm cả cache âm; "bypass" (link đang được đổi) tính là trượt
+        token = {r: run.counter_delta("diagramio_cache_share_tokens_total", window,
+                                      lambda labels, r=r: f"result={r}" in labels)
+                 for r in ("hit", "absent", "miss", "bypass")}
+        if all(v is not None for v in token.values()) and sum(token.values()):
+            m["hit_token"] = (token["hit"] + token["absent"]) / sum(token.values())
 
     pg = pg_totals(run)
     total_requests = run.value("http_reqs", "count", 0) or 0
@@ -357,12 +363,12 @@ def fmt(stat, digits=1, unit="") -> str:
 
 
 def hit_ratio(ms: list[dict]) -> str:
-    """Tỉ lệ trúng cache L1 (và L2 nếu có), trung vị qua các lần lặp; "–" khi cấu hình không có cache."""
+    """Tỉ lệ trúng cache L1, L2 và cache token (nếu có), trung vị qua các lần lặp; "–" khi không có cache."""
     parts = []
-    for level in ("l1", "l2"):
+    for level, name in (("l1", "L1"), ("l2", "L2"), ("token", "token")):
         s = spread([m.get(f"hit_{level}") for m in ms])
         if s:
-            parts.append(f"{level.upper()} {100 * s[0]:.0f}%")
+            parts.append(f"{name} {100 * s[0]:.0f}%")
     return ", ".join(parts) or "–"
 
 
@@ -730,7 +736,7 @@ def write_summary_csv(session: Path, metrics: list[dict]) -> Path:
               "capacity", "p50", "p95", "p99", "avg", "err", "r304", "share_304", "r409", "r4xx", "r5xx", "rnone", "conflicts",
               "fallbacks", "dropped", "cpu_app", "cpu_db", "cpu_cache", "cpu_loadgen", "loadgen_max", "steal", "sut_busy",
               "srv_mean", "srv_p95", "hikari_active", "hikari_pending_max", "tomcat_busy", "tomcat_busy_max",
-              "gc_ms_per_s", "heap_max_mb", "hit_l1", "hit_l2", "sql_per_req", "commits_per_req", "blocks_per_req", "toast_per_req",
+              "gc_ms_per_s", "heap_max_mb", "hit_l1", "hit_l2", "hit_token", "sql_per_req", "commits_per_req", "blocks_per_req", "toast_per_req",
               "db_ms_per_req", "checkpoints"]
     path = session / "summary.csv"
     with path.open("w", newline="", encoding="utf-8") as f:

@@ -13,6 +13,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Function;
 
 /**
  * Decorator của {@link DiagramRepository}: đọc qua {@link DiagramCache}, ghi CSDL rồi cập nhật cache sau commit.
@@ -35,11 +36,22 @@ public final class CachingDiagramRepository implements DiagramRepository {
     private final DiagramRepository delegate;
     private final DiagramCache cache;
     private final Cache<Long, DiagramPage> publicPages;
+    private final Function<UUID, Runnable> beforeDelete;
 
     public CachingDiagramRepository(DiagramRepository delegate, DiagramCache cache, Duration publicListTtl,
                                     MeterRegistry registry) {
+        this(delegate, cache, publicListTtl, registry, id -> () -> { });
+    }
+
+    /**
+     * @param beforeDelete gọi trước khi xóa một sơ đồ, trả việc cần làm sau commit (B3: đọc token của các link sẽ bị
+     *                     xóa theo khóa ngoại để bỏ chúng khỏi cache token)
+     */
+    public CachingDiagramRepository(DiagramRepository delegate, DiagramCache cache, Duration publicListTtl,
+                                    MeterRegistry registry, Function<UUID, Runnable> beforeDelete) {
         this.delegate = delegate;
         this.cache = cache;
+        this.beforeDelete = beforeDelete;
         if (cache.enabled() && !publicListTtl.isZero()) {
             this.publicPages = Caffeine.newBuilder().expireAfterWrite(publicListTtl).maximumSize(10_000)
                     .recordStats().build();
@@ -110,8 +122,12 @@ public final class CachingDiagramRepository implements DiagramRepository {
 
     @Override
     public void deleteById(UUID id) {
+        Runnable afterDelete = beforeDelete.apply(id);
         delegate.deleteById(id);
-        AfterCommit.run(() -> cache.deleted(id));
+        AfterCommit.run(() -> {
+            cache.deleted(id);
+            afterDelete.run();
+        });
     }
 
     /**

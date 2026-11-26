@@ -20,6 +20,10 @@ import org.springframework.util.unit.DataSize;
  * @param publicListTtl   micro-cache danh sách công khai; mặc định tắt (0) vì sơ đồ vừa chuyển sang riêng tư sẽ
  *                        còn trong danh sách tới hết thời gian này, và sau B1 câu danh sách đã rẻ (ADR-0003)
  * @param monitorInterval chu kỳ kiểm tra Redis và pub/sub
+ * @param shareTokens     cache tra cứu token chia sẻ (B3, ADR-0004); tắt để đo riêng phần của B2
+ * @param shareTokenTtl   thời gian sống của một token trong cache; cũng là thời gian sống của dấu "đang đổi"
+ * @param shareTokenNegativeTtl thời gian nhớ một token không tồn tại (cache âm)
+ * @param shareTokenMaxEntries  số token tối đa trong cache của chế độ local
  */
 @ConfigurationProperties("diagramio.cache")
 public record CacheProperties(
@@ -31,5 +35,9 @@ public record CacheProperties(
         @DefaultValue("2MB") DataSize maxEntrySize,
         @DefaultValue("128MB") DataSize versionMaxSize,
         @DefaultValue("0s") Duration publicListTtl,
-        @DefaultValue("1s") Duration monitorInterval) {
+        @DefaultValue("1s") Duration monitorInterval,
+        @DefaultValue("true") boolean shareTokens,
+        @DefaultValue("5m") Duration shareTokenTtl,
+        @DefaultValue("30s") Duration shareTokenNegativeTtl,
+        @DefaultValue("100000") long shareTokenMaxEntries) {
 }

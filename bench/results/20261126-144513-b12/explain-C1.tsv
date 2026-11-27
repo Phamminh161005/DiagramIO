@@ -1,0 +1,6 @@
+query	execution_ms	shared_hit	shared_read	rows	top_node
+public_page10	2.454	251	0	20	Nested Loop / Index Only Scan idx_diagrams_public_updated
+mine_page	1.277	57	0	20	Nested Loop / Index Only Scan idx_diagrams_owner_updated
+search_page	6.595	706	0	20	Nested Loop / Bitmap Heap Scan
+shares	0.500	76	0	80	Bitmap Heap Scan / Bitmap Heap Scan
+history	2.155	310	0	389	Sort / Bitmap Heap Scan

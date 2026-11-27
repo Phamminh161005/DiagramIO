@@ -1,0 +1,122 @@
+# C0, jar 15f23569342c48f818ae3b38489420a5ec1f9814, index V4: 0
+# owner db3913d3-15d6-4180-b007-b40e50d2a098 (4248 sơ đồ), từ khóa 'Appointment', lịch sử của e76ecea9-1a82-45d7-8eaa-4fac65665a0e, link của b6a60420-1a25-47bc-b59d-18027d78fd93
+
+## public_count
+SELECT count(id) FROM diagrams WHERE is_public
+Aggregate  (cost=6656.71..6656.72 rows=1 width=8) (actual time=20.063..20.065 rows=1 loops=1)
+  Buffers: shared hit=6144
+  ->  Seq Scan on diagrams  (cost=0.00..6644.00 rows=5083 width=16) (actual time=0.019..19.664 rows=5112 loops=1)
+        Filter: is_public
+        Rows Removed by Filter: 44888
+        Buffers: shared hit=6144
+Planning:
+  Buffers: shared hit=79
+Planning Time: 0.498 ms
+Execution Time: 20.163 ms
+
+## public_page10
+SELECT id, created_at, data, diagram_type, is_public, owner_id, title, updated_at, updated_by, version FROM diagrams WHERE is_public OFFSET 200 ROWS FETCH FIRST 20 ROWS ONLY
+Limit  (cost=261.42..287.56 rows=20 width=879) (actual time=1.104..1.169 rows=20 loops=1)
+  Buffers: shared hit=265
+  ->  Seq Scan on diagrams  (cost=0.00..6644.00 rows=5083 width=879) (actual time=0.019..1.155 rows=220 loops=1)
+        Filter: is_public
+        Rows Removed by Filter: 1929
+        Buffers: shared hit=265
+Planning:
+  Buffers: shared hit=133
+Planning Time: 0.707 ms
+Execution Time: 1.217 ms
+
+## mine_page
+SELECT id, created_at, data, diagram_type, is_public, owner_id, title, updated_at, updated_by, version FROM diagrams WHERE owner_id = 'db3913d3-15d6-4180-b007-b40e50d2a098' OFFSET 0 ROWS FETCH FIRST 20 ROWS ONLY
+Limit  (cost=0.00..31.78 rows=20 width=879) (actual time=0.018..0.216 rows=20 loops=1)
+  Buffers: shared hit=35
+  ->  Seq Scan on diagrams  (cost=0.00..6769.00 rows=4260 width=879) (actual time=0.017..0.212 rows=20 loops=1)
+        Filter: (owner_id = 'db3913d3-15d6-4180-b007-b40e50d2a098'::uuid)
+        Rows Removed by Filter: 279
+        Buffers: shared hit=35
+Planning:
+  Buffers: shared hit=136
+Planning Time: 0.736 ms
+Execution Time: 0.266 ms
+
+## mine_count
+SELECT count(id) FROM diagrams WHERE owner_id = 'db3913d3-15d6-4180-b007-b40e50d2a098'
+Aggregate  (cost=5969.59..5969.60 rows=1 width=8) (actual time=7.397..7.399 rows=1 loops=1)
+  Buffers: shared hit=3096
+  ->  Bitmap Heap Scan on diagrams  (cost=61.30..5958.94 rows=4260 width=16) (actual time=1.173..7.019 rows=4248 loops=1)
+        Recheck Cond: (owner_id = 'db3913d3-15d6-4180-b007-b40e50d2a098'::uuid)
+        Heap Blocks: exact=3091
+        Buffers: shared hit=3096
+        ->  Bitmap Index Scan on idx_diagrams_owner  (cost=0.00..60.24 rows=4260 width=0) (actual time=0.675..0.676 rows=4248 loops=1)
+              Index Cond: (owner_id = 'db3913d3-15d6-4180-b007-b40e50d2a098'::uuid)
+              Buffers: shared hit=5
+Planning:
+  Buffers: shared hit=114
+Planning Time: 0.663 ms
+Execution Time: 7.551 ms
+
+## search_page
+SELECT id, created_at, data, diagram_type, is_public, owner_id, title, updated_at, updated_by, version FROM diagrams WHERE owner_id = 'db3913d3-15d6-4180-b007-b40e50d2a098' AND upper(title) LIKE upper('%Appointment%') ESCAPE '\' OFFSET 0 ROWS FETCH FIRST 20 ROWS ONLY
+Limit  (cost=60.24..5979.17 rows=1 width=879) (actual time=1.388..2.244 rows=20 loops=1)
+  Buffers: shared hit=284
+  ->  Bitmap Heap Scan on diagrams  (cost=60.24..5979.17 rows=1 width=879) (actual time=1.386..2.239 rows=20 loops=1)
+        Recheck Cond: (owner_id = 'db3913d3-15d6-4180-b007-b40e50d2a098'::uuid)
+        Filter: (upper((title)::text) ~~ '%APPOINTMENT%'::text)
+        Rows Removed by Filter: 357
+        Heap Blocks: exact=279
+        Buffers: shared hit=284
+        ->  Bitmap Index Scan on idx_diagrams_owner  (cost=0.00..60.24 rows=4260 width=0) (actual time=0.691..0.692 rows=4248 loops=1)
+              Index Cond: (owner_id = 'db3913d3-15d6-4180-b007-b40e50d2a098'::uuid)
+              Buffers: shared hit=5
+Planning:
+  Buffers: shared hit=136
+Planning Time: 0.837 ms
+Execution Time: 2.344 ms
+
+## search_count
+SELECT count(id) FROM diagrams WHERE owner_id = 'db3913d3-15d6-4180-b007-b40e50d2a098' AND upper(title) LIKE upper('%Appointment%') ESCAPE '\'
+Aggregate  (cost=5979.17..5979.18 rows=1 width=8) (actual time=9.710..9.719 rows=1 loops=1)
+  Buffers: shared hit=3096
+  ->  Bitmap Heap Scan on diagrams  (cost=60.24..5979.17 rows=1 width=16) (actual time=1.330..9.682 rows=194 loops=1)
+        Recheck Cond: (owner_id = 'db3913d3-15d6-4180-b007-b40e50d2a098'::uuid)
+        Filter: (upper((title)::text) ~~ '%APPOINTMENT%'::text)
+        Rows Removed by Filter: 4054
+        Heap Blocks: exact=3091
+        Buffers: shared hit=3096
+        ->  Bitmap Index Scan on idx_diagrams_owner  (cost=0.00..60.24 rows=4260 width=0) (actual time=0.668..0.675 rows=4248 loops=1)
+              Index Cond: (owner_id = 'db3913d3-15d6-4180-b007-b40e50d2a098'::uuid)
+              Buffers: shared hit=5
+Planning:
+  Buffers: shared hit=114
+Planning Time: 0.793 ms
+Execution Time: 9.867 ms
+
+## shares
+SELECT id, created_at, diagram_id, role, share_token FROM diagram_shares WHERE diagram_id = 'b6a60420-1a25-47bc-b59d-18027d78fd93'
+Seq Scan on diagram_shares  (cost=0.00..558.00 rows=80 width=94) (actual time=0.092..2.176 rows=80 loops=1)
+  Filter: (diagram_id = 'b6a60420-1a25-47bc-b59d-18027d78fd93'::uuid)
+  Rows Removed by Filter: 19920
+  Buffers: shared hit=308
+Planning:
+  Buffers: shared hit=118
+Planning Time: 0.690 ms
+Execution Time: 2.233 ms
+
+## history
+SELECT id, created_at, created_by, data, diagram_id, note, version_number FROM diagram_versions WHERE diagram_id = 'e76ecea9-1a82-45d7-8eaa-4fac65665a0e' ORDER BY version_number DESC
+Sort  (cost=1524.66..1525.71 rows=420 width=1001) (actual time=2.560..2.596 rows=389 loops=1)
+  Sort Key: version_number DESC
+  Sort Method: quicksort  Memory: 576kB
+  Buffers: shared hit=310
+  ->  Bitmap Heap Scan on diagram_versions  (cost=15.68..1506.36 rows=420 width=1001) (actual time=0.174..1.857 rows=389 loops=1)
+        Recheck Cond: (diagram_id = 'e76ecea9-1a82-45d7-8eaa-4fac65665a0e'::uuid)
+        Heap Blocks: exact=301
+        Buffers: shared hit=307
+        ->  Bitmap Index Scan on diagram_versions_diagram_id_version_number_key  (cost=0.00..15.57 rows=420 width=0) (actual time=0.111..0.111 rows=389 loops=1)
+              Index Cond: (diagram_id = 'e76ecea9-1a82-45d7-8eaa-4fac65665a0e'::uuid)
+              Buffers: shared hit=6
+Planning:
+  Buffers: shared hit=139
+Planning Time: 0.697 ms
+Execution Time: 2.755 ms

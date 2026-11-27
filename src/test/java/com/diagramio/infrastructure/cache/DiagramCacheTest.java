@@ -30,7 +30,10 @@ class DiagramCacheTest {
     private static final Instant T0 = Instant.parse("2026-11-24T10:00:00Z");
 
     private final SimpleMeterRegistry registry = new SimpleMeterRegistry();
-    private final DiagramCache cache = local(64 * 1024 * 1024, 2 * 1024 * 1024);
+    private final LocalDiagramTier tier = new LocalDiagramTier(64 * 1024 * 1024, Duration.ofMinutes(10),
+            Duration.ofSeconds(60));
+    private final DiagramCache cache = new DiagramCache(DiagramCache.Mode.LOCAL, tier, null, 2 * 1024 * 1024,
+            registry);
     private final UUID id = UUID.randomUUID();
     private final ExecutorService pool = Executors.newFixedThreadPool(8);
 
@@ -91,6 +94,89 @@ class DiagramCacheTest {
 
         assertThat(reader.get(5, TimeUnit.SECONDS).orElseThrow().getTitle()).isEqualTo("stale"); // nó đọc gì trả nấy
         assertThat(cache.find(id, this::failIfLoaded).orElseThrow().getVersion()).isEqualTo(2);  // nhưng không đè được
+    }
+
+    /**
+     * Lỗi tìm thấy khi đo b12: lần nạp chậm đọc CSDL trước một lần ghi, rồi mục mới rời L1 (bị đẩy ra vì đầy, hay bị
+     * bỏ cùng cả L1 khi Redis trục trặc) trước khi lần nạp kịp ghi. So version với mục đang có không còn gì để so, nên
+     * version 1 quay lại cache và ở đó tới khi hết hạn: đọc thấy bản cũ, PUT với version đúng nhận 409.
+     */
+    @Test
+    void slowReaderCannotRefillAnOlderVersionAfterTheNewerEntryLeftTheCache() throws Exception {
+        CountDownLatch readerHasLoaded = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        Future<Optional<Diagram>> reader = pool.submit(() -> cache.find(id, () -> {
+            readerHasLoaded.countDown();
+            await(release);
+            return Optional.of(diagram(1, "stale"));
+        }));
+        await(readerHasLoaded);
+        cache.written(diagram(2, "fresh"));
+        tier.caffeine().invalidate(id);   // mục version 2 rời L1
+        release.countDown();
+        reader.get(5, TimeUnit.SECONDS);
+
+        AtomicInteger loads = new AtomicInteger();
+        Diagram next = cache.find(id, () -> {
+            loads.incrementAndGet();
+            return Optional.of(diagram(2, "fresh"));
+        }).orElseThrow();
+        assertThat(next.getVersion()).isEqualTo(2);
+        assertThat(loads).hasValue(1);
+    }
+
+    @Test
+    void readerThatJoinsALoadStartedBeforeAWriteReadsAgain() throws Exception {
+        CountDownLatch leaderHasLoaded = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        Future<Optional<Diagram>> leader = pool.submit(() -> cache.find(id, () -> {
+            leaderHasLoaded.countDown();
+            await(release);
+            return Optional.of(diagram(1, "stale"));
+        }));
+        await(leaderHasLoaded);
+        cache.written(diagram(2, "fresh"));   // ví dụ người đọc sau chính là người vừa ghi
+        tier.caffeine().invalidate(id);
+        AtomicInteger loads = new AtomicInteger();
+        Future<Optional<Diagram>> joiner = pool.submit(() -> cache.find(id, () -> {
+            loads.incrementAndGet();
+            return Optional.of(diagram(2, "fresh"));
+        }));
+        Thread.sleep(200);   // cho người đọc sau tới chỗ chờ lần nạp đang chạy
+        release.countDown();
+
+        assertThat(leader.get(5, TimeUnit.SECONDS).orElseThrow().getVersion()).isEqualTo(1);  // bắt đầu trước lần ghi
+        assertThat(joiner.get(5, TimeUnit.SECONDS).orElseThrow().getVersion()).isEqualTo(2);
+        assertThat(loads).hasValue(1);
+    }
+
+    @Test
+    void lateWriteThroughOfAnOlderVersionCannotReplaceANewerOneThatLeftTheCache() {
+        cache.written(diagram(3, "v3"));
+        tier.caffeine().invalidate(id);
+        cache.written(diagram(2, "v2, written through late"));
+
+        AtomicInteger loads = new AtomicInteger();
+        Diagram next = cache.find(id, () -> {
+            loads.incrementAndGet();
+            return Optional.of(diagram(3, "v3"));
+        }).orElseThrow();
+        assertThat(next.getVersion()).isEqualTo(3);
+        assertThat(loads).hasValue(1);
+    }
+
+    @Test
+    void changeAnnouncedByAnotherInstanceBlocksALateWriteOfAnOlderVersion() {
+        cache.onRemoteChange(new RedisDiagramTier.Change(id, 3, "other-instance"));
+        cache.written(diagram(2, "v2, written through after v3 was announced"));
+
+        AtomicInteger loads = new AtomicInteger();
+        Diagram next = cache.find(id, () -> {
+            loads.incrementAndGet();
+            return Optional.of(diagram(3, "v3"));
+        }).orElseThrow();
+        assertThat(next.getVersion()).isEqualTo(3);
+        assertThat(loads).hasValue(1);
     }
 
     @Test
@@ -180,17 +266,43 @@ class DiagramCacheTest {
     }
 
     @Test
-    void conflictDropsThePossiblyStaleEntry() {
+    void conflictDropsOlderEntriesAndBlocksASlowReaderOfAnOlderVersion() throws Exception {
         cache.find(id, () -> Optional.of(diagram(1, "v1")));
+        CountDownLatch readerHasLoaded = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        UUID other = UUID.randomUUID();
+        Future<Optional<Diagram>> slow = pool.submit(() -> cache.find(other, () -> {
+            readerHasLoaded.countDown();
+            await(release);
+            return Optional.of(diagram(other, 4, "read before the conflict"));
+        }));
+        await(readerHasLoaded);
 
-        cache.conflict(id);
+        cache.conflict(id, 2);      // CSDL đang ở version 2
+        cache.conflict(other, 5);
+        release.countDown();
+        slow.get(5, TimeUnit.SECONDS);
 
         AtomicInteger loads = new AtomicInteger();
-        cache.find(id, () -> {
+        assertThat(cache.find(id, () -> {
             loads.incrementAndGet();
             return Optional.of(diagram(2, "v2"));
-        });
-        assertThat(loads).hasValue(1);
+        }).orElseThrow().getVersion()).isEqualTo(2);
+        assertThat(cache.find(other, () -> {
+            loads.incrementAndGet();
+            return Optional.of(diagram(other, 5, "v5"));
+        }).orElseThrow().getVersion()).isEqualTo(5);
+        assertThat(loads).hasValue(2);
+        assertThat(cache.find(id, this::failIfLoaded).orElseThrow().getVersion()).isEqualTo(2);  // bản đúng vào lại
+    }
+
+    @Test
+    void conflictKeepsAnEntryThatIsAlreadyCurrent() {
+        cache.written(diagram(3, "v3"));
+
+        cache.conflict(id, 3);   // người gửi version cũ thua; cache đã đúng
+
+        assertThat(cache.find(id, this::failIfLoaded).orElseThrow().getVersion()).isEqualTo(3);
     }
 
     @Test

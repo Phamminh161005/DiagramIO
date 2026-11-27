@@ -41,11 +41,16 @@ public class DiagramService {
 
     /**
      * Owner hoặc người cầm link edit được sửa. Chỉ owner được đổi trạng thái công khai;
-     * người sửa qua link gửi isPublic khác thì giữ nguyên giá trị cũ.
+     * người sửa qua link gửi isPublic khác thì giữ nguyên giá trị đang có trong CSDL.
      * updatedBy là người đăng nhập, NULL nếu sửa qua link mà không đăng nhập.
      *
      * <p>Kiểm tra quyền chỉ đọc 4 cột (không đọc data), rồi ghi bằng một câu UPDATE có điều kiện version: không cần
      * transaction, vì người khác ghi chen vào giữa thì version đã đổi và câu UPDATE không sửa gì (409).
+     *
+     * <p>Thông tin đọc lúc kiểm tra quyền có thể chậm hơn CSDL (đọc từ cache, instance khác vừa ghi) nhưng không bao
+     * giờ đi trước CSDL. Vì vậy version gửi lên nhỏ hơn version đọc được thì chắc chắn đã cũ (409, không ghi); mọi
+     * trường hợp khác do câu UPDATE quyết định, và câu UPDATE không ghi gì lấy từ lần đọc đó ngoài các cột không bao
+     * giờ đổi (id, chủ).
      */
     public Diagram updateDiagram(UUID id, String title, DiagramType diagramType, DiagramData data,
                                  boolean isPublic, Caller caller, Integer requestVersion) {
@@ -53,23 +58,21 @@ public class DiagramService {
             throw new InvalidInputException("Diagram id is required");
         }
         DiagramAccessInfo current = access.require(id, caller, Permission.EDIT);
-        checkVersion(id, requestVersion, current.version());
+        rejectStaleVersion(id, requestVersion, current.version());
         requireType(diagramType);
         if (data == null) {
             throw new InvalidInputException("data must be valid JSON");
         }
 
-        Diagram diagram = new Diagram(current.id(), null, null, null, current.version(), current.isPublic(),
-                current.ownerId(), null, null, null);
+        // Chỉ owner đổi được trạng thái công khai; người sửa qua link gửi giá trị khác thì bỏ qua
+        boolean changePrivacy = Permission.MANAGE.isGrantedTo(caller, current);
+        Diagram diagram = new Diagram(current.id(), null, null, null, requestVersion,
+                changePrivacy ? isPublic : current.isPublic(), current.ownerId(), null, null, null);
         Instant now = Instant.now();
         diagram.updateMetadata(title, diagramType, caller.userId(), now);
         diagram.replaceContent(data, caller.userId(), now);
-        // Chỉ owner đổi được trạng thái công khai; người sửa qua link gửi giá trị khác thì bỏ qua
-        if (Permission.MANAGE.isGrantedTo(caller, current)) {
-            diagram.setPublic(isPublic);
-        }
-        return repository.updateIfVersion(diagram).orElseThrow(() -> new OptimisticLockConflictException(id,
-                requestVersion, repository.findAccessInfo(id).map(DiagramAccessInfo::version)
+        return repository.updateIfVersion(diagram, changePrivacy).orElseThrow(() -> new OptimisticLockConflictException(
+                id, requestVersion, repository.findAccessInfo(id).map(DiagramAccessInfo::version)
                         .orElseThrow(() -> new DiagramNotFoundException("Diagram not found: " + id))));
     }
 
@@ -103,9 +106,10 @@ public class DiagramService {
         return repository.findPublic(page, size);
     }
 
-    private void checkVersion(UUID id, Integer requestedVersion, int currentVersion) {
-        if (requestedVersion == null || requestedVersion != currentVersion) {
-            throw new OptimisticLockConflictException(id, requestedVersion, currentVersion);
+    /** {@code knownVersion} là một cận dưới của version trong CSDL. */
+    private void rejectStaleVersion(UUID id, Integer requestedVersion, int knownVersion) {
+        if (requestedVersion == null || requestedVersion < knownVersion) {
+            throw new OptimisticLockConflictException(id, requestedVersion, knownVersion);
         }
     }
 

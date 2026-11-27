@@ -108,7 +108,7 @@ class JpaRepositoriesIntegrationTest {
         Diagram change = new Diagram(diagram.getId(), "Renamed", DiagramType.UML, NEW_DATA, 1, true, owner, owner,
                 null, now);
 
-        Diagram updated = diagramRepository.updateIfVersion(change).orElseThrow();
+        Diagram updated = diagramRepository.updateIfVersion(change, true).orElseThrow();
 
         assertThat(updated.getVersion()).isEqualTo(2);
         assertThat(updated.getTitle()).isEqualTo("Renamed");
@@ -128,10 +128,10 @@ class JpaRepositoriesIntegrationTest {
         Diagram diagram = newDiagram("Shop ERD", DiagramType.ERD, false, T0);
         // Người khác đã lưu trước => CSDL lên version 2
         diagramRepository.updateIfVersion(new Diagram(diagram.getId(), "By someone else", DiagramType.ERD, DATA, 1,
-                false, owner, owner, null, T0.plusSeconds(1))).orElseThrow();
+                false, owner, owner, null, T0.plusSeconds(1)), true).orElseThrow();
 
         Optional<Diagram> stale = diagramRepository.updateIfVersion(new Diagram(diagram.getId(), "Mine",
-                DiagramType.ERD, NEW_DATA, 1, false, owner, owner, null, T0.plusSeconds(2)));
+                DiagramType.ERD, NEW_DATA, 1, false, owner, owner, null, T0.plusSeconds(2)), true);
 
         assertThat(stale).isEmpty();
         Diagram stored = diagramRepository.findById(diagram.getId()).orElseThrow();
@@ -146,8 +146,23 @@ class JpaRepositoriesIntegrationTest {
         diagramRepository.deleteById(diagram.getId());
 
         assertThat(diagramRepository.updateIfVersion(new Diagram(diagram.getId(), "x", DiagramType.ERD, DATA, 1,
-                false, owner, owner, null, T0))).isEmpty();
+                false, owner, owner, null, T0), true)).isEmpty();
         assertThat(diagramRepository.findById(diagram.getId())).isEmpty();
+    }
+
+    @Test
+    void updateThatMayNotChangePrivacyKeepsTheStoredFlagAndReturnsIt() {
+        Diagram diagram = newDiagram("Shop ERD", DiagramType.ERD, true, T0);
+
+        // Người sửa qua link gửi kèm isPublic=false (lấy từ một bản cũ): CSDL giữ nguyên, RETURNING trả giá trị thật
+        Diagram updated = diagramRepository.updateIfVersion(new Diagram(diagram.getId(), "Edited by link",
+                DiagramType.ERD, NEW_DATA, 1, false, owner, null, null, T0.plusSeconds(1)), false).orElseThrow();
+
+        assertThat(updated.isPublic()).isTrue();
+        assertThat(updated.getVersion()).isEqualTo(2);
+        Diagram stored = diagramRepository.findById(diagram.getId()).orElseThrow();
+        assertThat(stored.isPublic()).isTrue();
+        assertThat(stored.getTitle()).isEqualTo("Edited by link");
     }
 
     // ---------- danh sách ----------
@@ -254,7 +269,7 @@ class JpaRepositoriesIntegrationTest {
 
         DiagramVersion first = versionRepository.snapshot(UUID.randomUUID(), diagram.getId(), "first", owner, T0);
         diagramRepository.updateIfVersion(new Diagram(diagram.getId(), "Shop ERD", DiagramType.ERD, NEW_DATA, 1,
-                false, owner, owner, null, T0.plusSeconds(1))).orElseThrow();
+                false, owner, owner, null, T0.plusSeconds(1)), true).orElseThrow();
         DiagramVersionSummary second = versionRepository.snapshotSummary(UUID.randomUUID(), diagram.getId(), null,
                 null, T0.plusSeconds(2));
 
@@ -294,7 +309,7 @@ class JpaRepositoriesIntegrationTest {
         Diagram diagram = newDiagram("Shop ERD", DiagramType.ERD, false, T0);
         DiagramVersion old = versionRepository.snapshot(UUID.randomUUID(), diagram.getId(), null, owner, T0);
         diagramRepository.updateIfVersion(new Diagram(diagram.getId(), "Shop ERD", DiagramType.ERD, NEW_DATA, 1,
-                false, owner, owner, null, T0.plusSeconds(1))).orElseThrow();
+                false, owner, owner, null, T0.plusSeconds(1)), true).orElseThrow();
         Instant now = T0.plusSeconds(5);
 
         Diagram restored = diagramRepository.restoreContent(diagram.getId(), old.id(), null, now).orElseThrow();

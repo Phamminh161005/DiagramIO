@@ -249,9 +249,21 @@ Các cấu hình so sánh (mỗi cấu hình là một tag, cấu hình bật/t�
 | C0 | `v2.0-m0` | Mã pha 1 cộng phần đo | `m0`, `b12` |
 | C1 | `v2.1-b1` | C0 + B1 | `b12` |
 | C2, C3 | `v2.2-b2` | C1 + B2, cache `local` (C2) hoặc `two-level` (C3) | `b12` |
-| C2, C3 và C2b3, C3b3 | `v2.3.1` | Cùng một jar (B3 và bản gia cố sau B3), cache token tắt (C2, C3) hoặc bật (C2b3, C3b3) | `b3` |
+| C2, C3 và C2b3, C3b3 | `v2.3.2` | Cùng một jar (B3, gia cố sau B3, bản sửa cache sau phiên `b12`), cache token tắt (C2, C3) hoặc bật (C2b3, C3b3) | `b3` |
 
-Số đo C1–C3 (ma trận `b12`) và B3 (ma trận `b3`) đang chờ phiên Kaggle; kết quả sẽ được tổng hợp vào `docs/pha-2/ket-qua.md`.
+Kết quả B1, B2 (phiên `b12`, Kaggle Intel Xeon 2,20 GHz, khác máy của phiên M0 nên C0 cũng khác; chỉ so trong cùng phiên), chi tiết ở [docs/pha-2/ket-qua.md](docs/pha-2/ket-qua.md):
+
+| Kịch bản | Chỉ số | C0 | C1 (B1) | C2 (B2, cache trong JVM) |
+|---|---|---|---|---|
+| W2 | Sức chứa đạt SLO | 200 req/s | **800 req/s** | ≥ 800 req/s (k6 là nút thắt) |
+| W2 | p95 ở 200 req/s | 100,8 ms | **9,0 ms** | 8,9 ms |
+| W2 | CPU PostgreSQL ở 400 req/s, trạng thái gần ổn định | quá tải | 0,61 nhân | **0,50 nhân** |
+| W3 | Tốc độ còn phục vụ kịp | 30 req/s | 70 req/s | **110-130 req/s** |
+| W3 | p50 ở 20 req/s | 110 ms | 19,2 ms | **5,2 ms** |
+| W1 | Throughput (50 VU) | 832 req/s | **1.191 req/s** | 1.156 req/s |
+| CSDL | SQL mỗi request (W2 / W3) | 2,15 / 2,19 | 1,49 / 1,52 | **0,87 / 0,91** |
+
+Phiên này cũng phát hiện hai lỗi của cache B2 khi Redis hết thời gian chờ: cache trả bản cũ, và PUT đúng version nhận 409. Cả hai đã sửa ([ADR-0003](docs/adr/0003-cache-hai-tang-etag.md) mục 8). C2, C3 cùng B3 được đo lại ở phiên `b3`.
 
 Số đo pha 1 (Locust trên Kaggle, commit `ca41f27`) được giữ trong [docs/pha-1/kiem-thu-tai-locust.md](docs/pha-1/kiem-thu-tai-locust.md) để tham khảo. Không so trực tiếp với pha 2: Locust, app và CSDL dùng chung CPU, kịch bản 100% ghi trên CSDL gần rỗng. Cùng chuỗi request ở 10 người dùng, Locust chỉ đẩy được 330 req/s còn k6 đẩy được 1.503 req/s, tức là số pha 1 chủ yếu đo giới hạn của công cụ tạo tải.
 
@@ -268,9 +280,9 @@ Kế hoạch chi tiết: [docs/ke-hoach-pha-2.md](docs/ke-hoach-pha-2.md).
 | Phần | Bài toán | Trạng thái | ADR |
 |---|---|---|---|
 | M0 | Dựng lại phép đo (phép đo pha 1 đo giới hạn của Locust) | Xong, đã đo C0 | [0001](docs/adr/0001-phuong-phap-do.md) |
-| B1 | Mỗi request chạy thừa SQL và chở `data` (tới 2 MB) không cần thiết | Xong, chờ số đo Kaggle | [0002](docs/adr/0002-toi-uu-truy-cap-du-lieu.md) |
-| B2 | Đường đọc sơ đồ luôn chạm CSDL; client mở lại vẫn nhận lại toàn bộ nội dung | Xong, chờ số đo Kaggle | [0003](docs/adr/0003-cache-hai-tang-etag.md) |
-| B3 | Mọi request có `X-Share-Token` đều tra CSDL, trong khi thu hồi phải có hiệu lực ngay | Xong, chờ số đo Kaggle | [0004](docs/adr/0004-cache-token-chia-se.md) |
+| B1 | Mỗi request chạy thừa SQL và chở `data` (tới 2 MB) không cần thiết | Xong, đã đo: sức chứa W2 gấp 4 | [0002](docs/adr/0002-toi-uu-truy-cap-du-lieu.md) |
+| B2 | Đường đọc sơ đồ luôn chạm CSDL; client mở lại vẫn nhận lại toàn bộ nội dung | Xong, đã đo; sửa 2 lỗi phiên đo phát hiện, đo lại ở `b3` | [0003](docs/adr/0003-cache-hai-tang-etag.md) |
+| B3 | Mọi request có `X-Share-Token` đều tra CSDL, trong khi thu hồi phải có hiệu lực ngay | Xong, chờ số đo Kaggle (`b3`) | [0004](docs/adr/0004-cache-token-chia-se.md) |
 | Rà soát | Gia cố sau B3: giới hạn body, khởi động khi Redis chết, bộ nhớ cache, CI, image | Xong | [0005](docs/adr/0005-ra-soat-gia-co-sau-b3.md) |
 | B4 | Chạy nhiều instance sau Nginx, tắt máy êm, sẵn sàng khi một instance chết | Chưa làm | |
 | B5 | Rate limiting, bulkhead cho đăng nhập, phát hiện refresh token bị dùng lại | Chưa làm | |

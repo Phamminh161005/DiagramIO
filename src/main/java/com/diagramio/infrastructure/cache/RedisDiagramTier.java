@@ -22,8 +22,10 @@ import org.springframework.data.redis.serializer.RedisSerializer;
  * chỉ đọc {@code v}, {@code h} (vài trăm byte) thay vì cả data tới 2 MB.
  *
  * <p>Ghi bằng một Lua script so version ngay trên Redis: chỉ ghi khi version mới lớn hơn version đang lưu, nên hai
- * instance ghi chen nhau không làm bản cũ đè bản mới. Lỗi kết nối, hết thời gian chờ được ném ra cho
- * {@link DiagramCache} xử lý (chuyển sang đọc CSDL).
+ * instance ghi chen nhau không làm bản cũ đè bản mới. Không bao giờ xóa hẳn một mục: khi biết các version tới
+ * {@code v} đã cũ, mục được thay bằng một dấu sàn chỉ có trường {@code v} (đọc coi như trượt), để một lần nạp chậm
+ * mang version cũ hơn vẫn bị phép so version từ chối. Lỗi kết nối, hết thời gian chờ được ném ra cho
+ * {@link DiagramCache} xử lý (ngừng dùng L2, đọc CSDL).
  */
 public final class RedisDiagramTier {
 
@@ -54,10 +56,22 @@ public final class RedisDiagramTier {
             return stored
             """, Long.class);
 
-    /** KEYS[1] khóa; ARGV: kênh, tin. Xóa mục rồi publish, một lượt tới Redis. */
-    private static final RedisScript<Long> DELETE_AND_PUBLISH = new DefaultRedisScript<>("""
-            redis.call('DEL', KEYS[1])
-            return redis.call('PUBLISH', ARGV[1], ARGV[2])
+    /**
+     * KEYS[1] khóa; ARGV: version sàn, TTL (ms), kênh, tin. Mục có version không lớn hơn sàn (hoặc chưa có mục) được
+     * thay bằng dấu sàn {@code v = sàn}; mục mới hơn giữ nguyên. Trả 1 nếu đã đặt dấu. Rồi publish tin, một lượt tới
+     * Redis.
+     */
+    private static final RedisScript<Long> FENCE_AND_PUBLISH = new DefaultRedisScript<>("""
+            local fenced = 0
+            local current = redis.call('HGET', KEYS[1], 'v')
+            if not current or tonumber(current) <= tonumber(ARGV[1]) then
+              redis.call('DEL', KEYS[1])
+              redis.call('HSET', KEYS[1], 'v', ARGV[1])
+              redis.call('PEXPIRE', KEYS[1], ARGV[2])
+              fenced = 1
+            end
+            redis.call('PUBLISH', ARGV[3], ARGV[4])
+            return fenced
             """, Long.class);
 
     private final RedisTemplate<String, byte[]> redis;
@@ -135,18 +149,16 @@ public final class RedisDiagramTier {
         return stored != null && stored == 1L;
     }
 
-    public void delete(UUID id) {
-        redis.delete(key(id));
-    }
-
-    /** Bỏ mục (sơ đồ vừa đổi nhưng quá lớn để cache) và báo cho instance khác, trong một script. */
-    public void deleteAndPublish(UUID id, int version, String origin) {
-        redis.execute(DELETE_AND_PUBLISH, List.of(key(id)), bytes(CHANGES_CHANNEL), changeMessage(id, version, origin));
-    }
-
-    /** Báo cho các instance khác: sơ đồ {@code id} vừa có version {@code version} (bia mộ: lớn nhất). */
-    public void publishChange(UUID id, int version, String origin) {
-        redis.convertAndSend(CHANGES_CHANNEL, changeMessage(id, version, origin));
+    /**
+     * Các version tới {@code fenceVersion} của sơ đồ đã cũ: thay mục đang có (nếu không mới hơn) bằng dấu sàn, rồi
+     * báo cho instance khác rằng sơ đồ đã có version {@code changeVersion}, trong một script. Dấu sàn sống bằng bia
+     * mộ: đủ lâu hơn mọi lần nạp chậm. Trả true nếu đã đặt dấu.
+     */
+    public boolean fenceAndPublish(UUID id, int fenceVersion, int changeVersion, String origin) {
+        Long fenced = redis.execute(FENCE_AND_PUBLISH, List.of(key(id)), bytes(Integer.toString(fenceVersion)),
+                bytes(Long.toString(tombstoneTtl.toMillis())), bytes(CHANGES_CHANNEL),
+                changeMessage(id, changeVersion, origin));
+        return fenced != null && fenced == 1L;
     }
 
     private static byte[] changeMessage(UUID id, int version, String origin) {

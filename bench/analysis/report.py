@@ -27,6 +27,7 @@ SLO_ACHIEVED = 0.95           # đạt ít nhất 95% tốc độ đến yêu c�
 LOADGEN_CPU_LIMIT = 0.80      # k6 dùng dưới 80% CPU được cấp
 STEAL_LIMIT_PCT = 5.0
 DROPPED_LIMIT = 0.005         # bỏ dưới 0,5% iteration (thường là lúc k6 đang khởi tạo thêm VU) thì không đáng kể
+WARM_DRIFT_LIMIT = 0.25       # CPU app đầu pha đo cao hơn cuối pha đo quá 25%: JVM chưa ấm
 
 # Bảng màu phân loại theo thứ tự cố định (đã kiểm tra mù màu cho 3 màu đầu), mực chữ và nền biểu đồ
 SERIES = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"]
@@ -246,6 +247,18 @@ def run_metrics(run: Run) -> dict:
                  for r in ("hit", "absent", "miss", "bypass")}
         if all(v is not None for v in token.values()) and sum(token.values()):
             m["hit_token"] = (token["hit"] + token["absent"]) / sum(token.values())
+        # JVM chưa ấm hết sau warm-up (JIT còn biên dịch): ở cùng tốc độ đến, CPU app của phần ba đầu pha đo cao hơn
+        # hẳn phần ba cuối (phiên b12: C1 ở 400 req/s dùng 0,93 rồi 0,56 nhân)
+        third = (window[1] - window[0]) / 3
+        first = run.proc_mean("cpu_cores", "app", (window[0], window[0] + third))
+        last = run.proc_mean("cpu_cores", "app", (window[1] - third, window[1]))
+        m["cpu_app_drift"] = first / last - 1 if first and last else None
+    if run.start is not None:
+        # Lệnh Redis (L2) lỗi trong cả lần chạy, kể cả warm-up (lỗi lúc warm-up vẫn có thể để lại hậu quả)
+        whole = (run.start - 30, run.start + run.warmup + run.measure + 30)
+        is_error = lambda labels: "cache=diagrams" in labels and "result=error" in labels   # noqa: E731
+        m["l2_errors"] = run.counter_delta("diagramio_cache_l2_total", whole, is_error)
+        m["l2_errors_measure"] = run.counter_delta("diagramio_cache_l2_total", window, is_error) if window else None
 
     pg = pg_totals(run)
     total_requests = run.value("http_reqs", "count", 0) or 0
@@ -331,8 +344,17 @@ def validity(m: dict) -> list[str]:
         issues.append(f"vượt sức chứa: chỉ đạt {m['rps']:.0f}/{m['target']:.0f} req/s")
     elif m["mode"] == "fixed" and m["target"] and m["dropped"] > DROPPED_LIMIT * m["target"] * (m["measure_s"] or 1):
         issues.append(f"{m['dropped']:.0f} iteration bị bỏ (thiếu VU sẵn sàng)")
+    if m["mode"] == "fixed" and m.get("cpu_app_drift") is not None and m["cpu_app_drift"] > WARM_DRIFT_LIMIT:
+        issues.append(f"CPU app ở phần ba đầu pha đo cao hơn phần ba cuối {100 * m['cpu_app_drift']:.0f}%: "
+                      "JVM chưa ấm hết sau warm-up (tăng WARMUP)")
+    if m.get("l2_errors"):
+        issues.append(f"{m['l2_errors']:.0f} lệnh Redis (L2) lỗi trong lần chạy, "
+                      f"{m.get('l2_errors_measure') or 0:.0f} trong pha đo")
     if m["workload"] in ("w2", "w3") and m["conflicts"]:
-        issues.append(f"{m['conflicts']:.0f} lần 409 ngoài dự kiến (VU nhớ sai version: lỗi bộ đo)")
+        # Mỗi VU chỉ sửa sơ đồ của mình và tự đếm version, nên 409 nghĩa là server coi version đúng là cũ: VU nhớ
+        # sai (lỗi bộ đo) hoặc server so với một bản cũ trong cache (lỗi của hệ thống, như phiên b12 ở C3)
+        issues.append(f"{m['conflicts']:.0f} lần 409 ngoài dự kiến (VU nhớ sai version, hoặc server so với bản cũ "
+                      "trong cache)")
     if m["fallbacks"]:
         issues.append(f"{m['fallbacks']:.0f} thao tác phải đổi sang đọc vì phân vùng của VU không có dữ liệu phù hợp (giảm MAX_VUS hoặc tăng SCALE)")
     if m.get("checkpoints"):
@@ -737,7 +759,7 @@ def write_summary_csv(session: Path, metrics: list[dict]) -> Path:
               "fallbacks", "dropped", "cpu_app", "cpu_db", "cpu_cache", "cpu_loadgen", "loadgen_max", "steal", "sut_busy",
               "srv_mean", "srv_p95", "hikari_active", "hikari_pending_max", "tomcat_busy", "tomcat_busy_max",
               "gc_ms_per_s", "heap_max_mb", "hit_l1", "hit_l2", "hit_token", "sql_per_req", "commits_per_req", "blocks_per_req", "toast_per_req",
-              "db_ms_per_req", "checkpoints"]
+              "db_ms_per_req", "checkpoints", "cpu_app_drift", "l2_errors"]
     path = session / "summary.csv"
     with path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")

@@ -620,10 +620,12 @@ Báo cáo kết quả trình bày mọi bài toán theo cùng một khung: kịc
 
 **Must**
 - [x] B1: access info, UPDATE có điều kiện, snapshot và khôi phục trong DB, projection, `ORDER BY`, index, `Persistable` ([ADR-0002](adr/0002-toi-uu-truy-cap-du-lieu.md), tag `v2.1-b1`)
-  - [ ] Số đo C1 trên Kaggle (ma trận `b12`), EXPLAIN trước và sau; tinh chỉnh runtime (ma trận `tune`)
+  - [x] Số đo C1 trên Kaggle (ma trận `b12`, [kết quả](pha-2/ket-qua.md) mục 3), EXPLAIN trước và sau
+  - [ ] Tinh chỉnh runtime (ma trận `tune`, tùy chọn; chọn kích thước pool cho B4)
 - [x] B2: decorator cache, write-through có so version, bia mộ, pub/sub hủy L1 kèm heartbeat, chạy tiếp bằng CSDL khi Redis hỏng, ETag/304 ([ADR-0003](adr/0003-cache-hai-tang-etag.md))
   - Micro-cache danh sách công khai: có nhưng tắt mặc định (lý do ở ADR-0003 mục 4)
-  - [ ] Số đo C2, C3 trên Kaggle (ma trận `b12`)
+  - [x] Số đo C2, C3 trên Kaggle (ma trận `b12`, [kết quả](pha-2/ket-qua.md) mục 4); phiên đo phát hiện cache trả bản cũ khi Redis hết thời gian chờ, đã sửa ([ADR-0003](adr/0003-cache-hai-tang-etag.md) mục 8)
+  - [ ] Đo lại C2, C3 với bản sửa (ma trận `b3`)
 - [x] B3: cache token (Caffeine một instance, chỉ Redis nhiều instance), dấu "đang đổi" chặn lần nạp chậm, fail-closed 503, cache âm, E2E hai instance (QA-SEC1) ([ADR-0004](adr/0004-cache-token-chia-se.md))
   - [ ] Số đo trên Kaggle (ma trận `b3`)
 - [x] Rà soát và gia cố sau B3: giới hạn body 413, app khởi động khi Redis chết, bộ nhớ cache theo heap, một lượt Redis mỗi lần ghi, CI, image theo lớp ([ADR-0005](adr/0005-ra-soat-gia-co-sau-b3.md))

@@ -2,6 +2,8 @@ package com.diagramio.infrastructure.cache;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -74,9 +76,9 @@ class CachingRepositoriesTest {
     void successfulUpdateIsWrittenThroughSoTheNextReadSeesIt() {
         when(db.findById(id)).thenReturn(Optional.of(diagram(1, "v1")));
         repository.findById(id);
-        when(db.updateIfVersion(any())).thenReturn(Optional.of(diagram(2, "v2")));
+        when(db.updateIfVersion(any(), anyBoolean())).thenReturn(Optional.of(diagram(2, "v2")));
 
-        Diagram returned = repository.updateIfVersion(diagram(1, "v2")).orElseThrow();
+        Diagram returned = repository.updateIfVersion(diagram(1, "v2"), true).orElseThrow();
         returned.setTitle("mutated by the service afterwards");
 
         assertThat(repository.findById(id).orElseThrow().getTitle()).isEqualTo("v2");
@@ -84,15 +86,41 @@ class CachingRepositoriesTest {
     }
 
     @Test
-    void failedConditionalUpdateDropsTheCachedEntry() {
+    void failedConditionalUpdateFencesTheCacheAtTheVersionTheDatabaseHas() {
+        when(db.findById(id)).thenReturn(Optional.of(diagram(1, "v1")), Optional.of(diagram(2, "v2")));
+        repository.findById(id);
+        when(db.updateIfVersion(any(), anyBoolean())).thenReturn(Optional.empty());
+        when(db.findAccessInfo(id)).thenReturn(Optional.of(new DiagramAccessInfo(id, OWNER, false, 2)));
+
+        assertThat(repository.updateIfVersion(diagram(1, "mine"), true)).isEmpty();
+
+        assertThat(repository.findById(id).orElseThrow().getVersion()).isEqualTo(2);   // bản 1 đã bị bỏ
+        verify(db, times(2)).findById(id);
+        verify(db).updateIfVersion(any(), eq(true));
+    }
+
+    @Test
+    void failedConditionalUpdateOfADiagramDeletedMeanwhileLeavesATombstone() {
         when(db.findById(id)).thenReturn(Optional.of(diagram(1, "v1")));
         repository.findById(id);
-        when(db.updateIfVersion(any())).thenReturn(Optional.empty());
+        when(db.updateIfVersion(any(), anyBoolean())).thenReturn(Optional.empty());
+        when(db.findAccessInfo(id)).thenReturn(Optional.empty());
 
-        repository.updateIfVersion(diagram(1, "mine"));
-        repository.findById(id);
+        repository.updateIfVersion(diagram(1, "mine"), false);
 
-        verify(db, times(2)).findById(id);
+        assertThat(repository.findById(id)).isEmpty();
+        verify(db, times(1)).findById(id);
+    }
+
+    @Test
+    void cacheModeNoneAddsNoQueryToAFailedUpdate() {
+        DiagramCache none = new DiagramCache(DiagramCache.Mode.NONE, null, null, 0, registry);
+        CachingDiagramRepository passThrough = new CachingDiagramRepository(db, none, Duration.ZERO, registry);
+        when(db.updateIfVersion(any(), anyBoolean())).thenReturn(Optional.empty());
+
+        passThrough.updateIfVersion(diagram(1, "mine"), true);
+
+        verify(db, never()).findAccessInfo(any());
     }
 
     @Test

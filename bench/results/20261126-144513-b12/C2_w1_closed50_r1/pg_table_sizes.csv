@@ -1,0 +1,7 @@
+relname,total_bytes,heap_bytes,toast_bytes
+diagram_versions,738492416,262987776,453640192
+diagrams,565723136,102981632,432726016
+diagram_shares,19251200,7987200,0
+users,663552,335872,8192
+flyway_schema_history,81920,8192,8192
+refresh_tokens,57344,8192,0

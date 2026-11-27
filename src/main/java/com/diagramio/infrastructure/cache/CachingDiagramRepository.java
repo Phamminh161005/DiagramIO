@@ -24,7 +24,9 @@ import java.util.function.Function;
  *       CSDL, để thấy cả những gì chính transaction đó vừa ghi.</li>
  *   <li>{@code lockAccessInfo}: luôn CSDL (phải khóa dòng).</li>
  *   <li>{@code insert}, {@code updateIfVersion}, {@code restoreContent}: write-through trạng thái CSDL trả về
- *       ({@code RETURNING}); {@code deleteById}: bia mộ. Câu UPDATE không khớp version thì bỏ bản trong cache.</li>
+ *       ({@code RETURNING}); {@code deleteById}: bia mộ. Epoch của cache được lấy trước khi ghi CSDL, để bản ghi trễ
+ *       không vào một L1 vừa bị bỏ toàn bộ. Câu UPDATE không khớp version thì đọc version hiện tại từ CSDL (4 cột) và
+ *       dựng sàn ở đó: bản cũ hơn trong cache, nếu có, bị bỏ và không quay lại được.</li>
  *   <li>{@code findPublic}: micro-cache theo trang nếu bật {@code public-list-ttl} (mặc định tắt). Khi bật, danh
  *       sách công khai có thể trễ tới chừng ấy (sơ đồ vừa chuyển sang riêng tư vẫn còn trong danh sách); nội dung
  *       sơ đồ vẫn được kiểm tra quyền trên trạng thái mới nhất khi mở.</li>
@@ -63,8 +65,9 @@ public final class CachingDiagramRepository implements DiagramRepository {
 
     @Override
     public Diagram insert(Diagram diagram) {
+        long epoch = cache.epoch();
         Diagram inserted = delegate.insert(diagram);
-        writeThroughAfterCommit(inserted);
+        writeThroughAfterCommit(inserted, epoch);
         return inserted;
     }
 
@@ -90,20 +93,25 @@ public final class CachingDiagramRepository implements DiagramRepository {
     }
 
     @Override
-    public Optional<Diagram> updateIfVersion(Diagram diagram) {
-        Optional<Diagram> updated = delegate.updateIfVersion(diagram);
+    public Optional<Diagram> updateIfVersion(Diagram diagram, boolean changePrivacy) {
+        long epoch = cache.epoch();
+        Optional<Diagram> updated = delegate.updateIfVersion(diagram, changePrivacy);
         if (updated.isPresent()) {
-            writeThroughAfterCommit(updated.get());
-        } else {
-            cache.conflict(diagram.getId());
+            writeThroughAfterCommit(updated.get(), epoch);
+        } else if (cache.enabled()) {
+            UUID id = diagram.getId();
+            Optional<DiagramAccessInfo> current = delegate.findAccessInfo(id);
+            AfterCommit.run(() -> current.ifPresentOrElse(info -> cache.conflict(id, info.version()),
+                    () -> cache.deleted(id, epoch)));
         }
         return updated;
     }
 
     @Override
     public Optional<Diagram> restoreContent(UUID diagramId, UUID versionId, UUID changedBy, Instant changedAt) {
+        long epoch = cache.epoch();
         Optional<Diagram> restored = delegate.restoreContent(diagramId, versionId, changedBy, changedAt);
-        restored.ifPresent(this::writeThroughAfterCommit);
+        restored.ifPresent(d -> writeThroughAfterCommit(d, epoch));
         return restored;
     }
 
@@ -122,20 +130,21 @@ public final class CachingDiagramRepository implements DiagramRepository {
 
     @Override
     public void deleteById(UUID id) {
+        long epoch = cache.epoch();
         Runnable afterDelete = beforeDelete.apply(id);
         delegate.deleteById(id);
         AfterCommit.run(() -> {
-            cache.deleted(id);
+            cache.deleted(id, epoch);
             afterDelete.run();
         });
     }
 
     /**
      * Chụp trạng thái CSDL vừa trả về ngay bây giờ (bất biến), ghi vào cache sau commit: service có thể sửa tiếp
-     * đối tượng {@code Diagram} đã trả cho nó trước khi transaction kết thúc.
+     * đối tượng {@code Diagram} đã trả cho nó trước khi transaction kết thúc. {@code epoch}: lấy trước khi ghi CSDL.
      */
-    private void writeThroughAfterCommit(Diagram stored) {
+    private void writeThroughAfterCommit(Diagram stored, long epoch) {
         CachedDiagram entry = CachedDiagram.of(stored);
-        AfterCommit.run(() -> entry.toDiagram().ifPresent(cache::written));
+        AfterCommit.run(() -> entry.toDiagram().ifPresent(diagram -> cache.written(diagram, epoch)));
     }
 }

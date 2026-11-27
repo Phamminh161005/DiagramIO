@@ -81,8 +81,11 @@
 - Diagrams and versions are cached (`infrastructure/cache`, ADR-0003; mode `diagramio.cache.mode`: `none`, `local`, `redis`, `two-level`). Keep its invariants:
   - Every write to `diagrams` goes through `DiagramRepository`, so the decorator can write the new state to the cache after commit. Never change that table from another adapter or with SQL elsewhere.
   - The cache only accepts a newer `version` (version-checked write-through); deletes leave a tombstone. Do not add plain "put" or "evict then reload" paths.
+  - Removals leave a version floor, never a hole (ADR-0003 §8): when versions below `v` are known stale (own write, change from another instance, failed conditional UPDATE), raise the floor before dropping entries, write L1 only through `putIfNewer` (floor and epoch checked inside the key's `compute`), and on Redis replace the key with a floor marker instead of `DEL`. Dropping the whole L1 bumps the epoch first.
+  - A failed Redis command turns off L2 only; L1 is dropped only when the pub/sub heartbeat is lost. A failure of a command sent before the last state change must not change the state.
   - Cache entries are immutable (`CachedDiagram`); callers always get a new `Diagram`.
   - A conditional GET checks access before answering 304; never return 304 to a caller without the permission.
+  - Access info read for a check may lag behind the database (cache, another instance) but never leads it: reject a PUT early only when its version is lower; let the conditional UPDATE decide everything else, and never write a column (such as `is_public`) from that read.
 - Share-token lookups are cached too (ADR-0004; `diagramio.cache.share-tokens`): in JVM for `local`, only in Redis for `redis`/`two-level`. Keep its invariants:
   - Cache keys are the SHA-256 of the token; never store a raw token in a cache.
   - Every change to a link (role, revocation) goes through `DiagramShareRepository`, which marks the link as changing BEFORE the database change and drops the key after commit. If the marker cannot be written, do not change the link (503). Never add a path that changes `diagram_shares` without the marker.

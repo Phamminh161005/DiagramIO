@@ -1,0 +1,9 @@
+query	execution_ms	shared_hit	shared_read	rows	top_node
+public_count	19.809	6144	0	1	Aggregate / Seq Scan
+public_page10	1.287	265	0	20	Limit / Seq Scan
+mine_page	0.282	35	0	20	Limit / Seq Scan
+mine_count	7.552	3096	0	1	Aggregate / Bitmap Heap Scan
+search_page	2.343	284	0	20	Limit / Bitmap Heap Scan
+search_count	10.828	3096	0	1	Aggregate / Bitmap Heap Scan
+shares	2.515	308	0	80	Seq Scan / Seq Scan
+history	2.876	310	0	389	Sort / Bitmap Heap Scan

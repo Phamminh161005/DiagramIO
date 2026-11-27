@@ -94,8 +94,12 @@ export function setup() {
 // ---- Trạng thái riêng của mỗi VU
 let bucket = null;
 const lockVersions = {};   // id sơ đồ -> version hiện tại (chỉ các sơ đồ trong phân vùng của VU này)
-let etags = {};            // id sơ đồ -> ETag của lần mở trước
-let etagCount = 0;
+// Các sơ đồ VU vừa mở cùng ETag nhận được (vòng RECENT phần tử): "mở lại" là mở lại thật một sơ đồ client đã có, kèm
+// If-None-Match. Trước đây open_revisit chọn một sơ đồ ngẫu nhiên mới nên hiếm khi trùng sơ đồ đã mở (phiên b12: chỉ
+// 0,3% request được 304). Cấu hình không trả ETag (C0, C1) thì vòng luôn rỗng và mở lại như mở mới.
+const RECENT = 256;
+const recent = [];
+let recentNext = 0;
 let nonce = 0;
 // Sơ đồ có lần ghi không nhận được phản hồi (timeout, lỗi 5xx): không biết server đã ghi hay chưa, nên phải đọc
 // lại version trước lần ghi kế tiếp, thay vì gửi version cũ rồi nhận 409
@@ -115,15 +119,18 @@ function versionOf(item) {
   return lockVersions[item.id];
 }
 
-function rememberEtag(id, etag) {
-  if (etagCount >= 5000) {
-    etags = {};
-    etagCount = 0;
+/** Nhớ sơ đồ vừa mở nếu server trả ETag. */
+function rememberOpened(d, res) {
+  const etag = res.headers.Etag;
+  if (!etag) {
+    return;
   }
-  if (!(id in etags)) {
-    etagCount++;
+  if (recent.length < RECENT) {
+    recent.push({ d, etag });
+  } else {
+    recent[recentNext] = { d, etag };
+    recentNext = (recentNext + 1) % RECENT;
   }
-  etags[id] = etag;
 }
 
 function resync(id, ownerIndex, data) {
@@ -142,7 +149,10 @@ function settle(id, ownerIndex, data) {
   }
 }
 
-/** Sau khi ghi một thao tác làm tăng version: 200 thì +1, 409 là lỗi bộ đo, không có phản hồi thì chưa chắc. */
+/**
+ * Sau khi ghi một thao tác làm tăng version: 200 thì +1; 409 là ngoài dự kiến (VU nhớ sai version, hoặc server so
+ * với một bản cũ trong cache như phiên b12 ở C3); không có phản hồi thì chưa chắc.
+ */
 function afterVersionedWrite(res, id, ownerIndex, data) {
   if (res.status === 200) {
     lockVersions[id]++;
@@ -163,16 +173,22 @@ function fallback(data) {
 const OPERATIONS = {
   open_owner(data) {
     const d = pick(diagrams);
-    call('GET', '/diagrams/<id>', `/diagrams/${d.id}`, { op: 'open_owner', token: data.tokens[d.o] });
+    rememberOpened(d, call('GET', '/diagrams/<id>', `/diagrams/${d.id}`, { op: 'open_owner', token: data.tokens[d.o] }));
   },
   open_revisit(data) {
-    const d = pick(diagrams);
-    const res = call('GET', '/diagrams/<id>', `/diagrams/${d.id}`, {
-      op: 'open_revisit', token: data.tokens[d.o], ifNoneMatch: etags[d.id] || null,
+    if (recent.length === 0) {
+      const d = pick(diagrams);
+      rememberOpened(d, call('GET', '/diagrams/<id>', `/diagrams/${d.id}`, {
+        op: 'open_revisit', token: data.tokens[d.o],
+      }));
+      return;
+    }
+    const seen = recent[Math.floor(Math.random() * recent.length)];
+    const res = call('GET', '/diagrams/<id>', `/diagrams/${seen.d.id}`, {
+      op: 'open_revisit', token: data.tokens[seen.d.o], ifNoneMatch: seen.etag,
     });
-    const etag = res.headers.Etag;
-    if (etag) {
-      rememberEtag(d.id, etag);
+    if (res.status === 200 && res.headers.Etag) {
+      seen.etag = res.headers.Etag;   // sơ đồ đã đổi: client giữ bản mới
     }
   },
   share_open(data) {

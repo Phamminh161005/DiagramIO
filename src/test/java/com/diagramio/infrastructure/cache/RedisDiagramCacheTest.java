@@ -109,6 +109,49 @@ class RedisDiagramCacheTest {
     }
 
     @Test
+    void fenceReplacesOnlyEntriesUpToItsVersionAndRejectsFillsUpToIt() {
+        RedisDiagramTier tier = new RedisDiagramTier(connections, Duration.ofMinutes(30), Duration.ofSeconds(60));
+        UUID id = UUID.randomUUID();
+        tier.putIfNewer(CachedDiagram.of(diagram(id, 2, "v2", false)));
+
+        assertThat(tier.fenceAndPublish(id, 3, 4, "test")).isTrue();     // CSDL đang ở 4: bản 2 bị thay bằng dấu sàn
+        assertThat(tier.get(id)).isEmpty();                               // dấu sàn đọc như trượt
+        assertThat(tier.getAccessInfo(id)).isEmpty();
+        assertThat(tier.putIfNewer(CachedDiagram.of(diagram(id, 2, "slow fill", false)))).isFalse();
+        assertThat(tier.putIfNewer(CachedDiagram.of(diagram(id, 3, "slow fill", false)))).isFalse();
+        assertThat(tier.putIfNewer(CachedDiagram.of(diagram(id, 4, "v4", false)))).isTrue();
+        assertThat(tier.fenceAndPublish(id, 3, 4, "test")).isFalse();    // bản 4 mới hơn sàn: giữ
+        assertThat(tier.get(id).orElseThrow().version()).isEqualTo(4);
+
+        UUID missing = UUID.randomUUID();
+        assertThat(tier.fenceAndPublish(missing, 5, 6, "test")).isTrue(); // chưa có mục: vẫn đặt dấu
+        assertThat(tier.putIfNewer(CachedDiagram.of(diagram(missing, 5, "slow fill", false)))).isFalse();
+        UUID deleted = UUID.randomUUID();
+        tier.putIfNewer(CachedDiagram.tombstone(deleted));
+        assertThat(tier.fenceAndPublish(deleted, 5, 6, "test")).isFalse(); // bia mộ luôn mới nhất
+        assertThat(tier.get(deleted)).contains(CachedDiagram.tombstone(deleted));
+    }
+
+    /**
+     * CSDL đã ở version 2 mà cache không được báo (ví dụ instance ghi chết ngay sau commit). Instance A gặp câu UPDATE
+     * không khớp: trước đây A chỉ xóa bản của mình và khóa trên Redis, B vẫn trả version 1 từ L1. Giờ A dựng sàn
+     * version 2 trên Redis và báo B qua pub/sub.
+     */
+    @Test
+    void conflictOnOneInstanceFencesRedisAndTheOtherInstance() {
+        UUID id = UUID.randomUUID();
+        save(diagram(id, 1, "v1", false));
+        read(a, id);
+        assertThat(read(b, id).getVersion()).isEqualTo(1);
+        save(diagram(id, 2, "v2, cache never told", false));
+
+        a.cache().conflict(id, 2);
+
+        awaitTrue(() -> read(b, id).getVersion() == 2, "B drops version 1");
+        assertThat(read(a, id).getVersion()).isEqualTo(2);
+    }
+
+    @Test
     void secondInstanceIsServedByRedisAndDropsItsCopyWhenTheFirstWrites() {
         UUID id = UUID.randomUUID();
         save(diagram(id, 1, "v1", false));
@@ -160,7 +203,9 @@ class RedisDiagramCacheTest {
 
         pauseRedis(true);
         try {
-            awaitTrue(() -> !a.cache().remoteUp() && !b.cache().remoteUp(), "both stop using Redis");
+            // Lệnh hết thời gian chờ: ngừng dùng L2; heartbeat không về: ngừng dùng cả L1 (có thể lỡ thông báo hủy)
+            awaitTrue(() -> !a.cache().remoteUp() && !b.cache().remoteUp()
+                    && !a.cache().localTrusted() && !b.cache().localTrusted(), "both stop using Redis and L1");
             // Ghi trong lúc Redis treo: Redis vẫn giữ version 1, không ai báo được cho B
             a.cache().written(save(diagram(id, 2, "written while Redis hangs", false)));
             int before = databaseReads.get();
@@ -171,8 +216,9 @@ class RedisDiagramCacheTest {
             pauseRedis(false);
         }
 
-        awaitTrue(() -> a.cache().remoteUp() && b.cache().remoteUp(), "both use Redis again");
-        // Bản version 1 còn trên Redis đã bị A xóa khi hồi phục: không instance nào đọc lại nó
+        awaitTrue(() -> a.cache().remoteUp() && b.cache().remoteUp()
+                && a.cache().localTrusted() && b.cache().localTrusted(), "both use Redis and L1 again");
+        // Bản version 1 còn trên Redis đã bị A thay bằng dấu sàn khi hồi phục: không instance nào đọc lại nó
         assertThat(read(b, id).getVersion()).isEqualTo(2);
         assertThat(read(a, id).getVersion()).isEqualTo(2);
     }

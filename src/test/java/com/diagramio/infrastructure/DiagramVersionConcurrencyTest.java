@@ -80,7 +80,7 @@ class DiagramVersionConcurrencyTest {
         Diagram diagram = newDiagram(DATA_A);
         DiagramVersion snapshotA = versionService.createVersion(diagram.getId(), "A", null, OWNER);
         diagram.setData(DATA_B);
-        int versionBefore = diagramRepository.updateIfVersion(diagram).orElseThrow().getVersion();
+        int versionBefore = diagramRepository.updateIfVersion(diagram, true).orElseThrow().getVersion();
 
         List<RestoreResult> results = runConcurrently(10,
                 i -> () -> versionService.restore(diagram.getId(), snapshotA.id(), OWNER));

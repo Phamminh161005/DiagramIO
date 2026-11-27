@@ -7,7 +7,9 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -70,7 +72,7 @@ class DiagramServiceTest {
         stubInfo(false, 3);
         Diagram stored = new Diagram(id, "Updated", DiagramType.UML, NEW_DATA, 4, false, ownerId, ownerId, null, null);
         ArgumentCaptor<Diagram> written = ArgumentCaptor.forClass(Diagram.class);
-        when(repository.updateIfVersion(written.capture())).thenReturn(Optional.of(stored));
+        when(repository.updateIfVersion(written.capture(), eq(true))).thenReturn(Optional.of(stored));
 
         Diagram updated = service.updateDiagram(id, "Updated", DiagramType.UML, NEW_DATA, false,
                 Caller.user(ownerId), 3);
@@ -94,7 +96,7 @@ class DiagramServiceTest {
                 () -> service.updateDiagram(id, "Updated", DiagramType.UML, NEW_DATA, false, Caller.user(ownerId), 2));
 
         assertEquals(3, conflict.getCurrentVersion());
-        verify(repository, never()).updateIfVersion(any());
+        verify(repository, never()).updateIfVersion(any(), anyBoolean());
     }
 
     @Test
@@ -104,14 +106,14 @@ class DiagramServiceTest {
         assertThrows(OptimisticLockConflictException.class,
                 () -> service.updateDiagram(id, "Updated", DiagramType.UML, NEW_DATA, false, Caller.user(ownerId),
                         null));
-        verify(repository, never()).updateIfVersion(any());
+        verify(repository, never()).updateIfVersion(any(), anyBoolean());
     }
 
     @Test
     void updateLosingARaceIs409WithTheVersionThatWon() {
         // Cùng thấy version 3, người khác ghi xong trước: câu UPDATE không khớp dòng nào
         when(repository.findAccessInfo(id)).thenReturn(Optional.of(info(false, 3)), Optional.of(info(false, 4)));
-        when(repository.updateIfVersion(any())).thenReturn(Optional.empty());
+        when(repository.updateIfVersion(any(), anyBoolean())).thenReturn(Optional.empty());
 
         OptimisticLockConflictException conflict = assertThrows(OptimisticLockConflictException.class,
                 () -> service.updateDiagram(id, "Updated", DiagramType.UML, NEW_DATA, false, Caller.user(ownerId), 3));
@@ -123,10 +125,56 @@ class DiagramServiceTest {
     @Test
     void updateOfADiagramDeletedMeanwhileIs404() {
         when(repository.findAccessInfo(id)).thenReturn(Optional.of(info(false, 3)), Optional.empty());
-        when(repository.updateIfVersion(any())).thenReturn(Optional.empty());
+        when(repository.updateIfVersion(any(), anyBoolean())).thenReturn(Optional.empty());
 
         assertThrows(DiagramNotFoundException.class,
                 () -> service.updateDiagram(id, "Updated", DiagramType.UML, NEW_DATA, false, Caller.user(ownerId), 3));
+    }
+
+    /**
+     * Thông tin kiểm tra quyền đọc từ cache có thể chậm hơn CSDL (instance khác vừa ghi version 4). Trước đây bước so
+     * version trong Java trả 409 cho chính người gửi đúng version 4; giờ chỉ version nhỏ hơn mới chắc chắn cũ, còn lại
+     * câu UPDATE có điều kiện quyết định.
+     */
+    @Test
+    void versionAheadOfTheOneReadForTheAccessCheckIsDecidedByTheConditionalUpdate() {
+        stubInfo(false, 3);
+        Diagram stored = new Diagram(id, "Updated", DiagramType.UML, NEW_DATA, 5, false, ownerId, ownerId, null, null);
+        ArgumentCaptor<Diagram> written = ArgumentCaptor.forClass(Diagram.class);
+        when(repository.updateIfVersion(written.capture(), eq(true))).thenReturn(Optional.of(stored));
+
+        Diagram updated = service.updateDiagram(id, "Updated", DiagramType.UML, NEW_DATA, false,
+                Caller.user(ownerId), 4);
+
+        assertSame(stored, updated);
+        assertEquals(4, written.getValue().getVersion());   // version người gửi, không phải version đọc từ cache
+    }
+
+    @Test
+    void versionAheadThatTheDatabaseDoesNotHaveIs409WithTheDatabaseVersion() {
+        when(repository.findAccessInfo(id)).thenReturn(Optional.of(info(false, 3)), Optional.of(info(false, 3)));
+        when(repository.updateIfVersion(any(), anyBoolean())).thenReturn(Optional.empty());
+
+        OptimisticLockConflictException conflict = assertThrows(OptimisticLockConflictException.class,
+                () -> service.updateDiagram(id, "Updated", DiagramType.UML, NEW_DATA, false, Caller.user(ownerId), 9));
+
+        assertEquals(9, conflict.getRequestedVersion());
+        assertEquals(3, conflict.getCurrentVersion());
+    }
+
+    @Test
+    void editorNeverWritesThePrivacyFlagSoAStaleCachedFlagCannotBeWrittenBack() {
+        // Cache còn ghi "công khai" (bản cũ); chủ vừa chuyển sang riêng tư ở version 4
+        stubInfo(true, 3);
+        when(repository.updateIfVersion(any(Diagram.class), anyBoolean()))
+                .thenReturn(Optional.of(new Diagram(id, "Updated", DiagramType.ERD, NEW_DATA, 5, false, ownerId, null,
+                        null, null)));
+
+        Diagram updated = service.updateDiagram(id, "Updated", DiagramType.ERD, NEW_DATA, true,
+                Caller.shareToken(id, ShareRole.EDIT), 4);
+
+        verify(repository).updateIfVersion(any(Diagram.class), eq(false));   // CSDL giữ nguyên is_public
+        assertFalse(updated.isPublic());
     }
 
     // Luật cấu trúc data (nodes/edges, 2 MB) nằm trong DiagramData, xem DiagramDataTest.
@@ -136,7 +184,7 @@ class DiagramServiceTest {
 
         assertThrows(InvalidInputException.class, () -> service.updateDiagram(
                 id, "Orders", DiagramType.ERD, null, false, Caller.user(ownerId), 1));
-        verify(repository, never()).updateIfVersion(any());
+        verify(repository, never()).updateIfVersion(any(), anyBoolean());
     }
 
     @Test
@@ -185,7 +233,7 @@ class DiagramServiceTest {
         assertThrows(ForbiddenException.class, () -> service.updateDiagram(
                 id, "Hacked", DiagramType.ERD, DiagramData.EMPTY, false, Caller.user(UUID.randomUUID()), 1));
 
-        verify(repository, never()).updateIfVersion(any());
+        verify(repository, never()).updateIfVersion(any(), anyBoolean());
     }
 
     @Test
@@ -196,7 +244,7 @@ class DiagramServiceTest {
                 id, "Updated", DiagramType.ERD, DiagramData.EMPTY, false,
                 Caller.shareToken(id, ShareRole.VIEW), 1));
 
-        verify(repository, never()).updateIfVersion(any());
+        verify(repository, never()).updateIfVersion(any(), anyBoolean());
     }
 
     @Test
@@ -205,13 +253,13 @@ class DiagramServiceTest {
 
         assertThrows(UnauthorizedException.class, () -> service.updateDiagram(
                 id, "Updated", DiagramType.ERD, DiagramData.EMPTY, false, Caller.anonymous(), 1));
-        verify(repository, never()).updateIfVersion(any());
+        verify(repository, never()).updateIfVersion(any(), anyBoolean());
     }
 
     @Test
     void editShareTokenCanUpdateButCannotChangeVisibility() {
         stubInfo(false, 1);
-        when(repository.updateIfVersion(any(Diagram.class))).thenAnswer(invocation -> Optional.of(invocation.getArgument(0)));
+        when(repository.updateIfVersion(any(Diagram.class), anyBoolean())).thenAnswer(invocation -> Optional.of(invocation.getArgument(0)));
 
         Diagram updated = service.updateDiagram(id, "Updated", DiagramType.ERD, DiagramData.EMPTY, true,
                 Caller.shareToken(id, ShareRole.EDIT), 1);
@@ -224,7 +272,7 @@ class DiagramServiceTest {
     @Test
     void editShareTokenKeepsAPublicDiagramPublic() {
         stubInfo(true, 1);
-        when(repository.updateIfVersion(any(Diagram.class))).thenAnswer(invocation -> Optional.of(invocation.getArgument(0)));
+        when(repository.updateIfVersion(any(Diagram.class), anyBoolean())).thenAnswer(invocation -> Optional.of(invocation.getArgument(0)));
 
         Diagram updated = service.updateDiagram(id, "Updated", DiagramType.ERD, DiagramData.EMPTY, false,
                 Caller.shareToken(id, ShareRole.EDIT), 1);
@@ -236,7 +284,7 @@ class DiagramServiceTest {
     void loggedInEditorIsRecordedAsUpdatedBy() {
         UUID editorId = UUID.randomUUID();
         stubInfo(false, 1);
-        when(repository.updateIfVersion(any(Diagram.class))).thenAnswer(invocation -> Optional.of(invocation.getArgument(0)));
+        when(repository.updateIfVersion(any(Diagram.class), anyBoolean())).thenAnswer(invocation -> Optional.of(invocation.getArgument(0)));
 
         Diagram updated = service.updateDiagram(id, "Updated", DiagramType.ERD, DiagramData.EMPTY, false,
                 new Caller(editorId, id, ShareRole.EDIT), 1);
@@ -247,7 +295,7 @@ class DiagramServiceTest {
     @Test
     void ownerCanMakeDiagramPublicAndPrivateAgain() {
         stubInfo(false, 1);
-        when(repository.updateIfVersion(any(Diagram.class))).thenAnswer(invocation -> Optional.of(invocation.getArgument(0)));
+        when(repository.updateIfVersion(any(Diagram.class), anyBoolean())).thenAnswer(invocation -> Optional.of(invocation.getArgument(0)));
 
         Diagram updated = service.updateDiagram(id, "Orders", DiagramType.ERD, DiagramData.EMPTY, true,
                 Caller.user(ownerId), 1);

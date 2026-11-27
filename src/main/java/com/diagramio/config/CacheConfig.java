@@ -79,7 +79,8 @@ public class CacheConfig {
                 ? new RedisDiagramTier(redis.getObject(), properties.redisTtl(), properties.tombstoneTtl())
                 : null;
         int maxDataChars = (int) Math.min(Integer.MAX_VALUE, properties.maxEntrySize().toBytes());
-        return new DiagramCache(mode, local, remote, maxDataChars, registry);
+        // Sàn version sống bằng bia mộ: đủ lâu hơn mọi lần nạp chậm
+        return new DiagramCache(mode, local, remote, maxDataChars, properties.tombstoneTtl(), registry);
     }
 
     @Bean

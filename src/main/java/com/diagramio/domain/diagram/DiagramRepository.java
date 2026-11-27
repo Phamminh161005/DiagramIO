@@ -22,11 +22,12 @@ public interface DiagramRepository {
     Optional<DiagramAccessInfo> lockAccessInfo(UUID id);
 
     /**
-     * Ghi tên, loại, data, trạng thái công khai, người sửa và thời điểm sửa của {@code diagram}, chỉ khi version
-     * trong CSDL vẫn là {@code diagram.getVersion()}; version tăng 1. Rỗng nếu version đã đổi hoặc sơ đồ đã bị xóa,
-     * khi đó không có gì bị ghi.
+     * Ghi tên, loại, data, người sửa và thời điểm sửa của {@code diagram}, và trạng thái công khai nếu
+     * {@code changePrivacy} (không thì giữ giá trị đang có trong CSDL), chỉ khi version trong CSDL vẫn là
+     * {@code diagram.getVersion()}; version tăng 1. Trả trạng thái đã lưu. Rỗng nếu version đã đổi hoặc sơ đồ đã bị
+     * xóa, khi đó không có gì bị ghi.
      */
-    Optional<Diagram> updateIfVersion(Diagram diagram);
+    Optional<Diagram> updateIfVersion(Diagram diagram, boolean changePrivacy);
 
     /**
      * Chép data của phiên bản {@code versionId} vào sơ đồ ngay trong CSDL, ghi người và thời điểm sửa, version tăng 1.

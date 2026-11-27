@@ -86,24 +86,26 @@ public class DiagramRepositoryAdapter implements DiagramRepository {
      * (response dùng chính data vừa ghi). Không có dòng nào khớp nghĩa là version đã đổi hoặc sơ đồ đã bị xóa.
      */
     @Override
-    public Optional<Diagram> updateIfVersion(Diagram diagram) {
+    public Optional<Diagram> updateIfVersion(Diagram diagram, boolean changePrivacy) {
         MapSqlParameterSource params = new MapSqlParameterSource()
                 .addValue("id", diagram.getId())
                 .addValue("expected", diagram.getVersion())
                 .addValue("title", diagram.getTitle())
                 .addValue("type", diagram.getDiagramType().name())
                 .addValue("data", diagram.getData().json())
+                .addValue("changePrivacy", changePrivacy)
                 .addValue("isPublic", diagram.isPublic())
                 .addValue("updatedBy", diagram.getUpdatedBy())
                 .addValue("updatedAt", timestamp(diagram.getUpdatedAt()));
         List<Diagram> updated = jdbc.query("""
                 UPDATE diagrams
-                SET title = :title, diagram_type = :type, data = CAST(:data AS jsonb), is_public = :isPublic,
+                SET title = :title, diagram_type = :type, data = CAST(:data AS jsonb),
+                    is_public = CASE WHEN :changePrivacy THEN :isPublic ELSE is_public END,
                     updated_by = :updatedBy, updated_at = :updatedAt, version = version + 1
                 WHERE id = :id AND version = :expected
-                RETURNING version, created_at, updated_at""", params, (rs, n) -> new Diagram(diagram.getId(),
-                diagram.getTitle(), diagram.getDiagramType(), diagram.getData(), rs.getInt("version"),
-                diagram.isPublic(), diagram.getOwnerId(), diagram.getUpdatedBy(), instant(rs, "created_at"),
+                RETURNING version, is_public, created_at, updated_at""", params, (rs, n) -> new Diagram(
+                diagram.getId(), diagram.getTitle(), diagram.getDiagramType(), diagram.getData(), rs.getInt("version"),
+                rs.getBoolean("is_public"), diagram.getOwnerId(), diagram.getUpdatedBy(), instant(rs, "created_at"),
                 instant(rs, "updated_at")));
         return updated.stream().findFirst();
     }

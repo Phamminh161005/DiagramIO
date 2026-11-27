@@ -33,8 +33,8 @@ Số câu SQL mỗi request không phụ thuộc phần cứng nên được đo
 2. Trong **Settings**: Accelerator là **None** (CPU), bật **Internet** (cần để cài gói và clone repo).
 3. Ở ô đầu tiên, đặt `REPO_URL`, `REF` (commit hoặc tag có thư mục `bench/`), `MATRIX` và `REPS`.
 4. Chạy ở chế độ nền để không phụ thuộc trình duyệt: **Save Version → Save & Run All (Commit)**. Thời gian (giới hạn của Kaggle là 12 giờ):
-   - `b12`: C0 (`v2.0-m0`), C1 (B1, `v2.1-b1`), C2 (B2, cache `local`), C3 (B2, cache `two-level`) xen kẽ: khoảng 8-9 giờ với `REPS=3`, khoảng 6 giờ với `REPS=2`;
-   - `b3`: phần đóng góp của B3 (cache token chia sẻ) trên nền B2, cùng một jar bật/tắt bằng `diagramio.cache.share-tokens`: C2, C3 (không cache token) so với C2b3, C3b3; khoảng 2,5 giờ;
+   - `b12`: C0 (`v2.0-m0`), C1 (B1, `v2.1-b1`), C2 (B2, cache `local`), C3 (B2, cache `two-level`) xen kẽ: khoảng 6,5-7 giờ với `REPS=3`, 4,7 giờ với `REPS=2` (phiên `20261126-144513-b12`);
+   - `b3`: phần đóng góp của B3 (cache token chia sẻ) trên nền B2, cùng một jar bật/tắt bằng `diagramio.cache.share-tokens`: C2, C3 (không cache token) so với C2b3, C3b3; W2 400 và 700 req/s, sức chứa, warm-up 180 giây; khoảng 3,5 giờ với `REPS=2`;
    - `tune`: tinh chỉnh runtime của B1 (pool Hikari 20, virtual threads), khoảng 1,5 giờ;
    - `m0`: chỉ C0, khoảng 3,5 giờ.
 5. Khi xong, tải `results.tgz` trong tab **Output**, giải nén vào `bench/results/` của repo, rồi commit các file tóm tắt (mục 5).
@@ -84,11 +84,11 @@ Tỉ lệ thao tác của W2 (đổi bằng biến `MIX`, JSON):
 
 Quy ước chung (giải thích trong ADR-0001):
 
-- Mỗi lần chạy: chép CSDL mẫu, nạp vào bộ đệm, checkpoint, khởi động JVM mới; warm-up 60 giây không tính, đo 180 giây; lặp 3 lần, báo cáo trung vị và min–max.
+- Mỗi lần chạy: chép CSDL mẫu, nạp vào bộ đệm, checkpoint, khởi động JVM mới; warm-up không tính (180 giây từ ma trận `b3`; `m0`, `b12` giữ 60 giây như lúc đo), đo 180 giây; lặp 3 lần, báo cáo trung vị và min–max. Báo cáo cảnh báo khi CPU app ở phần ba đầu pha đo cao hơn phần ba cuối quá 25% (JVM chưa ấm hết) và khi có lệnh Redis lỗi.
 - Mô hình tải mở: mỗi iteration của k6 là đúng một request, nên tốc độ đến chính là request/giây; thời gian chậm không làm giảm tải gửi tới (không bị coordinated omission).
 - Sức chứa: tăng 100 req/s mỗi bậc 30 giây (bỏ 6 giây đầu mỗi bậc); kết quả là bậc cuối cùng còn đạt **p95 ≤ 100 ms, lỗi < 1%, đạt ≥ 95% tốc độ yêu cầu**. Một bậc vượt p95 1 giây hoặc lỗi 5% thì dừng sớm.
 - 3 vCPU cho hệ thống được đo (app, PostgreSQL), 1 vCPU cho k6 và bộ thu số liệu (`taskset`). Báo cáo cảnh báo khi k6 dùng quá 80% CPU của nó.
-- W2, W3: mỗi VU chỉ ghi vào phân vùng sơ đồ của riêng nó, nên không có 409 giả tạo; tranh chấp thật để dành cho W4.
+- W2, W3: mỗi VU chỉ ghi vào phân vùng sơ đồ của riêng nó và tự đếm version, nên 409 không phải do tranh chấp; tranh chấp thật để dành cho W4. Có 409 thì hoặc VU nhớ sai version, hoặc server so với một bản cũ trong cache (phiên `b12` ở C3, đã sửa: [kết quả](../docs/pha-2/ket-qua.md)).
 
 Biến môi trường hay dùng (đầy đủ trong `kaggle/env.sh`, `k6/lib/config.js`):
 
@@ -96,7 +96,7 @@ Biến môi trường hay dùng (đầy đủ trong `kaggle/env.sh`, `k6/lib/con
 |---|---|---|
 | `REF_<cấu hình>` | theo ma trận (b12: `C0=v2.0-m0`, `C1=v2.1-b1`, `C2=C3=HEAD`) | git ref build cấu hình đó; cùng ref chỉ build một lần |
 | `ARGS_<cấu hình>` | theo ma trận (b12: `C2=--diagramio.cache.mode=local`, `C3=--diagramio.cache.mode=two-level`) | tham số thêm cho app của cấu hình đó |
-| `REPS`, `WARMUP`, `MEASURE` | 3, 60, 180 | số lần lặp, giây warm-up, giây đo |
+| `REPS`, `WARMUP`, `MEASURE` | theo ma trận (b3: 2, 180, 180) | số lần lặp, giây warm-up, giây đo |
 | `SCALE` | 1.0 | quy mô dữ liệu (1.0 = 2.000 user, 50.000 sơ đồ, ~150.000 phiên bản) |
 | `SUT_CPUS`, `LOADGEN_CPUS` | 3 CPU đầu, CPU thứ 4 | bố trí CPU |
 | `JVM_HEAP` | `2g` | heap cố định (`-Xms` = `-Xmx`) |

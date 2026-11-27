@@ -16,10 +16,11 @@ import org.springframework.data.redis.listener.RedisMessageListenerContainer;
 /**
  * Theo dõi Redis cho {@link DiagramCache} và nhận thông báo thay đổi từ instance khác.
  *
- * <p>Mỗi {@code interval}: có L1 thì gửi một heartbeat qua kênh pub/sub và coi Redis là dùng được khi đã nhận lại
- * heartbeat gần đây của chính mình (lệnh ghi chạy được và thông báo hủy L1 tới được nơi); chỉ có L2 thì PING.
- * Kết quả được báo cho cache: không dùng được thì cache đọc thẳng CSDL, dùng lại được thì cache dọn dẹp trước khi
- * dùng lại. Như vậy khoảng thời gian một instance có thể dùng L1 đã lỡ thông báo hủy bị chặn ở vài nhịp theo dõi.
+ * <p>Mỗi {@code interval}: có L1 thì gửi một heartbeat qua kênh pub/sub; lệnh gửi được nghĩa là L2 dùng được, nhận
+ * lại được heartbeat gần đây của chính mình nghĩa là thông báo hủy L1 tới được nơi. Chỉ có L2 thì PING. Hai kết quả
+ * được báo riêng cho cache ({@link DiagramCache#remoteStatus}): lệnh lỗi thì ngừng dùng L2, mất pub/sub thì ngừng dùng
+ * L1, dùng lại được thì cache dọn dẹp trước khi dùng lại. Như vậy khoảng thời gian một instance có thể dùng L1 đã lỡ
+ * thông báo hủy bị chặn ở vài nhịp theo dõi.
  *
  * <p>Việc đăng ký kênh pub/sub cũng chạy trong luồng theo dõi, không chạy lúc khởi động app: Redis chưa lên (hay đang
  * khởi động lại) thì app vẫn khởi động và phục vụ bằng CSDL, đăng ký được thử lại ở mỗi nhịp cho tới khi thành công.
@@ -79,20 +80,26 @@ public final class RedisCacheMonitor implements SmartLifecycle {
         if (listenForChanges && container == null) {
             subscribe();
         }
-        boolean available;
-        try {
-            if (listenForChanges) {
-                long sequence = sent.incrementAndGet();
+        boolean commandsOk;
+        boolean subscribed = true;
+        if (listenForChanges) {
+            long sequence = sent.incrementAndGet();
+            try {
                 tier.publishHeartbeat(cache.instanceId(), sequence);
-                available = received > 0 && received >= sequence - MAX_HEARTBEAT_LAG;
-            } else {
-                available = tier.ping();
+                commandsOk = true;
+            } catch (RuntimeException e) {
+                commandsOk = false;
             }
-        } catch (RuntimeException e) {
-            available = false;
+            subscribed = received > 0 && received >= sequence - MAX_HEARTBEAT_LAG;
+        } else {
+            try {
+                commandsOk = tier.ping();
+            } catch (RuntimeException e) {
+                commandsOk = false;
+            }
         }
         try {
-            cache.remoteAvailable(available);
+            cache.remoteStatus(commandsOk, subscribed);
         } catch (RuntimeException e) {
             log.warn("Lỗi khi cập nhật trạng thái Redis của cache sơ đồ", e);
         }

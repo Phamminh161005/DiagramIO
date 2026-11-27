@@ -5,10 +5,10 @@
 #   bash bench/kaggle/run_matrix.sh [b12|b3|tune|m0|quick]
 #
 # b12    C0 (v2.0-m0), C1 (B1, tag v2.1-b1), C2 (B2, cache Caffeine), C3 (B2, Caffeine + Redis): W1, W2, W3 và
-#        EXPLAIN của C0, C1; mỗi phép đo 3 lần, khoảng 8-9 giờ trên Kaggle (REPS=2: khoảng 6 giờ)
+#        EXPLAIN của C0, C1; mỗi phép đo 3 lần, khoảng 6,5-7 giờ trên Kaggle (REPS=2: 4,7 giờ ở phiên 20261126)
 # b3     phần đóng góp của B3 (cache token chia sẻ) trên nền B2, cùng một jar bật/tắt bằng cờ: C2, C3 không có cache
 #        token; C2b3, C3b3 có; W2 400 và 700 req/s (dưới mức k6 thành nút thắt, khoảng 850 req/s trên 1 vCPU) và
-#        sức chứa, mỗi phép đo 2 lần, khoảng 4-5 giờ. Cũng là lần đo lại C2, C3 sau bản sửa cache (phiên b12)
+#        sức chứa, mỗi phép đo 2 lần, khoảng 3,5 giờ. Cũng là lần đo lại C2, C3 sau bản sửa cache (phiên b12)
 # tune   tinh chỉnh runtime của B1, mỗi lần một biến: pool Hikari 10 (mặc định) / 20, virtual threads; W2
 #
 # Warm-up 180 giây từ b3 trở đi: phiên b12 (60 giây) cho thấy JIT còn chạy suốt phút đầu của pha đo (CPU app ở

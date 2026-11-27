@@ -29,7 +29,7 @@
 | C2 | `v2.2-b2` (`3aa8d6a`), B2 | `--diagramio.cache.mode=local` |
 | C3 | `v2.2-b2` (`3aa8d6a`), B2 | `--diagramio.cache.mode=two-level` |
 
-- 2 lần lặp cho mỗi phép đo, các cấu hình chạy xen kẽ; warm-up 60 giây, đo 180 giây. Tổng 57 lần chạy, khoảng 11,7 giờ. Các bảng dưới là trung vị qua các lần lặp (khoảng min-max trong báo cáo đầy đủ).
+- 2 lần lặp cho mỗi phép đo, các cấu hình chạy xen kẽ; warm-up 60 giây, đo 180 giây. Tổng 56 lần chạy, khoảng 4,7 giờ (14:45 tới 19:25 UTC, kể cả cài đặt, build và nạp dữ liệu). Các bảng dưới là trung vị qua các lần lặp (khoảng min-max trong báo cáo đầy đủ).
 
 ## 3. B1: C0 → C1
 

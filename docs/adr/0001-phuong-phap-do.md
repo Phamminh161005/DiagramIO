@@ -43,10 +43,12 @@ Ngoài ra kịch bản Locust gốc chỉ nằm trong notebook Kaggle của pha 
 
 - mỗi iteration là đúng một request, nên tốc độ đến của k6 chính là request/giây;
 - mỗi VU chỉ ghi vào phân vùng sơ đồ riêng và tự nhớ version (sửa hay khôi phục thành công thì +1), nên không có 409 giả tạo; tranh chấp thật thuộc về W4;
-- thao tác "mở lại" gửi `If-None-Match` nếu lần trước có `ETag`: ở C0 không có ETag nên là một lần đọc đầy đủ, khi B2 thêm ETag thì cùng kịch bản tự nhận 304;
+- thao tác "mở lại" mở lại một trong 256 sơ đồ VU vừa mở, kèm `If-None-Match` của lần trước: ở C0, C1 không có ETag nên là một lần đọc đầy đủ, khi B2 thêm ETag thì cùng kịch bản tự nhận 304. (Trước phiên `b3`, thao tác này chọn một sơ đồ ngẫu nhiên mới nên hiếm khi có ETag hợp lệ: phiên `b12` chỉ 0,3% request được 304; [kết quả](../pha-2/ket-qua.md) mục 6.3);
 - 200 user nhiều sơ đồ nhất đăng nhập trước khi đo (trong `setup`), access token kéo dài 8 giờ trong bench để lần chạy dài không bị hết hạn; thời hạn token không ảnh hưởng chi phí kiểm tra chữ ký.
 
-**Thời lượng và lặp.** Mỗi lần chạy khởi động JVM mới, warm-up 60 giây (không tính), đo 180 giây. Mỗi phép đo lặp 3 lần, báo cáo trung vị và min–max. Trong một phiên, các cấu hình chạy xen kẽ trong từng vòng lặp (C0, C1, C0, C1...) để độ trôi của máy ảo ảnh hưởng đều; so sánh hai cấu hình chỉ hợp lệ trong cùng một phiên.
+**Thời lượng và lặp.** Mỗi lần chạy khởi động JVM mới, warm-up (không tính) rồi đo 180 giây. Mỗi phép đo lặp 3 lần, báo cáo trung vị và min–max. Trong một phiên, các cấu hình chạy xen kẽ trong từng vòng lặp (C0, C1, C0, C1...) để độ trôi của máy ảo ảnh hưởng đều; so sánh hai cấu hình chỉ hợp lệ trong cùng một phiên.
+
+Warm-up ban đầu là 60 giây. Phiên `b12` cho thấy chừng đó chưa đủ: ở tốc độ đến cố định, CPU app phải gần như không đổi, nhưng nó giảm suốt pha đo vì JIT còn biên dịch (C1 ở 400 req/s: 0,93 rồi 0,64 rồi 0,56 nhân qua từng phút; ở W2, phần ba đầu pha đo cao hơn phần ba cuối 27-137%). Từ phiên `b3` warm-up 180 giây, và báo cáo cảnh báo khi độ chênh đó vượt 25% ([kết quả](../pha-2/ket-qua.md) mục 6.2). Ma trận `m0`, `b12` giữ 60 giây để lần chạy lại so được với phiên đã có.
 
 **Sức chứa.** Tốc độ đến tăng theo bậc (W2: 100 req/s mỗi bậc 30 giây), bỏ 1 giây chuyển bậc và 5 giây đầu mỗi bậc. Độ phân giải của kết quả là một bậc (100 req/s với W2). Một bậc vượt p95 1 giây hoặc lỗi 5% thì dừng sớm để không phí thời gian khi đã quá tải rõ ràng.
 

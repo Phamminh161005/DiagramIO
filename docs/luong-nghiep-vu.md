@@ -74,8 +74,8 @@ Nhiều người có thể sửa cùng một sơ đồ. Vì vậy client phải 
 - "Hợp lệ" gồm hai việc: đã xác thực bằng JWT hoặc `X-Share-Token` (không thì 401), và body đúng: `title` không rỗng, `diagramType` là UML hoặc ERD, có `version` và `data` (không thì 400).
 - "Được sửa" gồm sơ đồ có tồn tại (không thì 404) và quyền `EDIT`, tức là chủ hoặc người có link edit (không thì 403). "Đúng version" là `version` gửi lên bằng `version` trong DB.
 - `data` phải là object có mảng `nodes` và `edges`, tối đa 2 MB.
-- Khi lưu, chỉ chủ đổi được `isPublic`; người sửa qua link gửi giá trị khác thì vẫn giữ giá trị cũ. `updatedBy` là người đăng nhập, để NULL nếu sửa qua link mà không đăng nhập.
-- Có hai lớp chống ghi đè: so sánh version trong code, và chính câu ghi là một lệnh `UPDATE ... WHERE id = ? AND version = ?` (B1). Lớp thứ hai bắt được trường hợp hai request cùng qua bước so sánh gần như cùng lúc: câu `UPDATE` của người đến sau không khớp dòng nào nên trả 409, không cần transaction hay khóa.
+- Khi lưu, chỉ chủ đổi được `isPublic`; người sửa qua link gửi giá trị khác thì vẫn giữ giá trị đang có trong DB (câu ghi không chạm cột này). `updatedBy` là người đăng nhập, để NULL nếu sửa qua link mà không đăng nhập.
+- Có hai lớp chống ghi đè. Bước kiểm tra trong code chỉ từ chối ngay (409, không ghi) khi `version` gửi lên **nhỏ hơn** version đọc được lúc kiểm tra quyền. Version đó có thể lấy từ cache nên có thể chậm hơn DB, nhưng không bao giờ đi trước DB. Quyết định cuối cùng là chính câu ghi, một lệnh `UPDATE ... WHERE id = ? AND version = ?` (B1). Nó bắt được hai trường hợp: hai request cùng qua bước kiểm tra gần như cùng lúc, và cache chậm hơn DB. Câu `UPDATE` không khớp dòng nào thì trả 409 kèm version hiện tại trong DB, không cần transaction hay khóa.
 - Sau khi ghi, trạng thái mới được ghi vào cache, chỉ khi version mới hơn bản đang có ([ADR-0003](adr/0003-cache-hai-tang-etag.md)). Response có `ETag: W/"<version>"`; client mở lại sơ đồ với `If-None-Match` thì nhận 304 nếu chưa ai sửa (quyền vẫn được kiểm tra trước).
 - Khi nhận 409, client tải lại sơ đồ bằng `GET` để lấy version mới rồi sửa lại.
 

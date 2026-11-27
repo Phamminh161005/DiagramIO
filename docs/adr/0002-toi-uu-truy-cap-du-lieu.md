@@ -1,6 +1,6 @@
 # ADR-0002: Tối ưu truy cập dữ liệu (B1)
 
-- Trạng thái: Đã triển khai, chờ số đo Kaggle (cấu hình C1)
+- Trạng thái: Đã triển khai và đo (phiên `b12`, [kết quả](../pha-2/ket-qua.md) mục 3)
 - Mốc: B1 trong [kế hoạch pha 2](../ke-hoach-pha-2.md)
 - Liên quan: [ADR-0001](0001-phuong-phap-do.md) (phương pháp đo), [danh-gia-hien-trang.md](../pha-2/danh-gia-hien-trang.md) (số đo C0)
 
@@ -78,4 +78,15 @@ Số câu lệnh mỗi request, đo bằng `SqlPerRequestE2eTest` (sơ đồ 50 
 ## Kiểm chứng
 
 - `./mvnw test`: toàn bộ test cũ và mới xanh, gồm `ArchitectureTest`, `DiagramVersionConcurrencyTest` (thêm: 20 luồng cùng sửa, lưu và khôi phục xen kẽ), `JpaRepositoriesIntegrationTest` (từng câu SQL trên PostgreSQL thật: phân trang ổn định khi trùng `updated_at`, tìm tên có ký tự đại diện, 409 và 404 của UPDATE có điều kiện, khôi phục phiên bản của sơ đồ khác không đổi gì, cascade khi xóa), `SqlPerRequestE2eTest` (bảng trên).
-- Số đo trên Kaggle (C0 so với C1, cùng phiên, xen kẽ): W1, W2, W3; `EXPLAIN (ANALYZE, BUFFERS)` của danh sách, tìm kiếm, link và lịch sử trước và sau (`bench/kaggle/explain.sh`). Điền vào `docs/pha-2/ket-qua.md` sau phiên đo.
+- Số đo trên Kaggle (phiên `b12`, C0 so với C1 cùng phiên, xen kẽ; chi tiết ở [kết quả](../pha-2/ket-qua.md) mục 3):
+
+| Chỉ số | C0 | C1 |
+|---|---|---|
+| Sức chứa W2 (p95 ≤ 100 ms, lỗi < 1%) | 200 req/s | **800 req/s** (CPU của hệ thống được đo hết ở 900) |
+| W2 200 req/s: p95 / CPU PostgreSQL / khối CSDL mỗi request | 100,8 ms / 1,12 nhân / 839 | **9,0 ms / 0,26 nhân / 101** |
+| W1 (50 VU): throughput / p95 | 832 req/s / 150,5 ms | **1.191 req/s / 99,0 ms** |
+| W3 20 req/s: p95 / SQL mỗi request / khối CSDL mỗi request | 156 ms (lần lặp không quá tải) / 2,19 / 857 | **97 ms / 1,52 / 133** |
+| W3: tốc độ còn phục vụ kịp | 30 req/s | **70 req/s** |
+| Danh sách công khai (EXPLAIN): câu lệnh / thời gian | 2 câu, quét tuần tự, 21 ms | 1 câu, index-only, 2,5 ms |
+
+QA-P1 (sức chứa ≥ 2 lần C0) đạt, gấp 4. QA-P3 (danh sách, tìm kiếm p95 ≤ 50 ms, không đọc `data`) đạt: 7,6 / 25,7 / 15,0 ms ở 400 req/s. QA-P2 chỉ đạt một phần với riêng B1. Lượng dữ liệu của W3 giảm 84%, nhưng số câu lệnh mỗi request chỉ giảm 31% (mục tiêu 50%), vì mỗi lần mở sơ đồ vẫn cần một câu đọc nội dung; cộng B2 (cache) thì giảm 58%.

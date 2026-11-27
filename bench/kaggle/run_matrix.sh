@@ -7,8 +7,12 @@
 # b12    C0 (v2.0-m0), C1 (B1, tag v2.1-b1), C2 (B2, cache Caffeine), C3 (B2, Caffeine + Redis): W1, W2, W3 và
 #        EXPLAIN của C0, C1; mỗi phép đo 3 lần, khoảng 8-9 giờ trên Kaggle (REPS=2: khoảng 6 giờ)
 # b3     phần đóng góp của B3 (cache token chia sẻ) trên nền B2, cùng một jar bật/tắt bằng cờ: C2, C3 không có cache
-#        token; C2b3, C3b3 có; W2 400 req/s và sức chứa, mỗi phép đo 2 lần, khoảng 2,5 giờ
+#        token; C2b3, C3b3 có; W2 400 và 700 req/s (dưới mức k6 thành nút thắt, khoảng 850 req/s trên 1 vCPU) và
+#        sức chứa, mỗi phép đo 2 lần, khoảng 4-5 giờ. Cũng là lần đo lại C2, C3 sau bản sửa cache (phiên b12)
 # tune   tinh chỉnh runtime của B1, mỗi lần một biến: pool Hikari 10 (mặc định) / 20, virtual threads; W2
+#
+# Warm-up 180 giây từ b3 trở đi: phiên b12 (60 giây) cho thấy JIT còn chạy suốt phút đầu của pha đo (CPU app ở
+# phần ba đầu cao hơn phần ba cuối 30-90%); b12 và m0 giữ 60 giây để chạy lại so được với phiên đã có.
 # m0     cấu hình C0 (hiện trạng), kịch bản W1-W3, mỗi phép đo 3 lần: khoảng 3-4 giờ trên Kaggle
 # quick  chạy thử vài phút với dữ liệu nhỏ, để kiểm tra môi trường (gồm Redis, EXPLAIN) trước khi chạy thật
 #
@@ -48,9 +52,10 @@ case "$matrix" in
                   [C2b3]="--diagramio.cache.mode=local"
                   [C3]="--diagramio.cache.mode=two-level --diagramio.cache.share-tokens=false"
                   [C3b3]="--diagramio.cache.mode=two-level")
-    : "${REPS:=2}" "${SCALE:=1.0}" "${WARMUP:=60}" "${MEASURE:=180}"
+    : "${REPS:=2}" "${SCALE:=1.0}" "${WARMUP:=180}" "${MEASURE:=180}"
     PLAN=(
       "w2 fixed 400"
+      "w2 fixed 700"
       "w2 capacity auto RATE_START=100 RATE_STEP=100 RATE_MAX=3000 MAX_VUS=1000"
     )
     PROFILE_PLAN=("w2 fixed 400")
@@ -60,7 +65,7 @@ case "$matrix" in
     DEFAULT_REF=([C1]=v2.1-b1 [C1pool20]=v2.1-b1 [C1vt]=v2.1-b1)
     DEFAULT_ARGS=([C1pool20]="--spring.datasource.hikari.maximum-pool-size=20"
                   [C1vt]="--spring.threads.virtual.enabled=true")
-    : "${REPS:=2}" "${SCALE:=1.0}" "${WARMUP:=60}" "${MEASURE:=180}"
+    : "${REPS:=2}" "${SCALE:=1.0}" "${WARMUP:=180}" "${MEASURE:=180}"
     PLAN=(
       "w2 fixed 400"
       "w2 capacity auto RATE_START=100 RATE_STEP=100 RATE_MAX=3000 MAX_VUS=1000"

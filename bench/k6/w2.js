@@ -142,7 +142,10 @@ function settle(id, ownerIndex, data) {
   }
 }
 
-/** Sau khi ghi một thao tác làm tăng version: 200 thì +1, 409 là lỗi bộ đo, không có phản hồi thì chưa chắc. */
+/**
+ * Sau khi ghi một thao tác làm tăng version: 200 thì +1; 409 là ngoài dự kiến (VU nhớ sai version, hoặc server so
+ * với một bản cũ trong cache như phiên b12 ở C3); không có phản hồi thì chưa chắc.
+ */
 function afterVersionedWrite(res, id, ownerIndex, data) {
   if (res.status === 200) {
     lockVersions[id]++;

@@ -38,22 +38,37 @@ Mỗi câu chạy 3 lần, giữ lần cuối (cache đã ấm). Kế hoạch đ
 
 | Lần chạy | Vấn đề |
 |---|---|
-| `C0_w2_fixed200_r1` | 694 iteration bị bỏ (thiếu VU sẵn sàng) |
-| `C0_w2_fixed200_r2` | 510 iteration bị bỏ (thiếu VU sẵn sàng) |
-| `C0_w2_fixed400_r1` | vượt sức chứa: chỉ đạt 257/400 req/s |
+| `C0_w2_fixed200_r1` | 694 iteration bị bỏ (thiếu VU sẵn sàng); CPU app ở phần ba đầu pha đo cao hơn phần ba cuối 194%: JVM chưa ấm hết sau warm-up (tăng WARMUP) |
+| `C0_w2_fixed200_r2` | 510 iteration bị bỏ (thiếu VU sẵn sàng); CPU app ở phần ba đầu pha đo cao hơn phần ba cuối 150%: JVM chưa ấm hết sau warm-up (tăng WARMUP) |
+| `C0_w2_fixed400_r1` | vượt sức chứa: chỉ đạt 257/400 req/s; CPU app ở phần ba đầu pha đo cao hơn phần ba cuối 36%: JVM chưa ấm hết sau warm-up (tăng WARMUP) |
 | `C0_w2_fixed400_r2` | vượt sức chứa: chỉ đạt 262/400 req/s |
-| `C0_w2_fixed400_rprof` | vượt sức chứa: chỉ đạt 247/400 req/s |
-| `C0_w3_fixed20_r2` | vượt sức chứa: chỉ đạt 17/20 req/s |
+| `C0_w2_fixed400_rprof` | vượt sức chứa: chỉ đạt 247/400 req/s; CPU app ở phần ba đầu pha đo cao hơn phần ba cuối 29%: JVM chưa ấm hết sau warm-up (tăng WARMUP) |
+| `C0_w3_fixed20_r2` | vượt sức chứa: chỉ đạt 17/20 req/s; CPU app ở phần ba đầu pha đo cao hơn phần ba cuối 394%: JVM chưa ấm hết sau warm-up (tăng WARMUP) |
+| `C1_w2_fixed200_r1` | CPU app ở phần ba đầu pha đo cao hơn phần ba cuối 31%: JVM chưa ấm hết sau warm-up (tăng WARMUP) |
+| `C1_w2_fixed200_r2` | CPU app ở phần ba đầu pha đo cao hơn phần ba cuối 29%: JVM chưa ấm hết sau warm-up (tăng WARMUP) |
+| `C1_w2_fixed400_r1` | CPU app ở phần ba đầu pha đo cao hơn phần ba cuối 65%: JVM chưa ấm hết sau warm-up (tăng WARMUP) |
+| `C1_w2_fixed400_r2` | CPU app ở phần ba đầu pha đo cao hơn phần ba cuối 64%: JVM chưa ấm hết sau warm-up (tăng WARMUP) |
+| `C1_w2_fixed400_rprof` | CPU app ở phần ba đầu pha đo cao hơn phần ba cuối 79%: JVM chưa ấm hết sau warm-up (tăng WARMUP) |
 | `C2_w2_capacityauto_r1` | k6 dùng tới 0.84 CPU (> 0.8): máy tạo tải có thể là nút thắt |
 | `C2_w2_capacityauto_r2` | k6 dùng tới 0.90 CPU (> 0.8): máy tạo tải có thể là nút thắt |
-| `C2_w2_fixed400_r2` | 575 iteration bị bỏ (thiếu VU sẵn sàng) |
+| `C2_w2_fixed200_r1` | CPU app ở phần ba đầu pha đo cao hơn phần ba cuối 27%: JVM chưa ấm hết sau warm-up (tăng WARMUP) |
+| `C2_w2_fixed200_r2` | CPU app ở phần ba đầu pha đo cao hơn phần ba cuối 35%: JVM chưa ấm hết sau warm-up (tăng WARMUP) |
+| `C2_w2_fixed400_r1` | CPU app ở phần ba đầu pha đo cao hơn phần ba cuối 92%: JVM chưa ấm hết sau warm-up (tăng WARMUP) |
+| `C2_w2_fixed400_r2` | 575 iteration bị bỏ (thiếu VU sẵn sàng); CPU app ở phần ba đầu pha đo cao hơn phần ba cuối 84%: JVM chưa ấm hết sau warm-up (tăng WARMUP) |
+| `C2_w2_fixed400_rprof` | CPU app ở phần ba đầu pha đo cao hơn phần ba cuối 48%: JVM chưa ấm hết sau warm-up (tăng WARMUP) |
+| `C2_w3_fixed20_r1` | CPU app ở phần ba đầu pha đo cao hơn phần ba cuối 27%: JVM chưa ấm hết sau warm-up (tăng WARMUP) |
+| `C2_w3_fixed20_r2` | CPU app ở phần ba đầu pha đo cao hơn phần ba cuối 34%: JVM chưa ấm hết sau warm-up (tăng WARMUP) |
+| `C2_w3_fixed20_rprof` | CPU app ở phần ba đầu pha đo cao hơn phần ba cuối 25%: JVM chưa ấm hết sau warm-up (tăng WARMUP) |
 | `C3_w2_capacityauto_r1` | k6 dùng tới 0.87 CPU (> 0.8): máy tạo tải có thể là nút thắt |
 | `C3_w2_capacityauto_r2` | k6 dùng tới 0.88 CPU (> 0.8): máy tạo tải có thể là nút thắt |
-| `C3_w2_fixed200_r1` | 434 iteration bị bỏ (thiếu VU sẵn sàng) |
-| `C3_w2_fixed400_r1` | 835 iteration bị bỏ (thiếu VU sẵn sàng); 4 lần 409 ngoài dự kiến (VU nhớ sai version: lỗi bộ đo) |
-| `C3_w2_fixed400_r2` | 823 iteration bị bỏ (thiếu VU sẵn sàng) |
-| `C3_w2_fixed400_rprof` | 3145 iteration bị bỏ (thiếu VU sẵn sàng); 2 lần 409 ngoài dự kiến (VU nhớ sai version: lỗi bộ đo) |
+| `C3_w2_fixed200_r1` | 434 iteration bị bỏ (thiếu VU sẵn sàng); CPU app ở phần ba đầu pha đo cao hơn phần ba cuối 29%: JVM chưa ấm hết sau warm-up (tăng WARMUP); 63 lệnh Redis (L2) lỗi trong lần chạy, 0 trong pha đo |
+| `C3_w2_fixed200_r2` | CPU app ở phần ba đầu pha đo cao hơn phần ba cuối 39%: JVM chưa ấm hết sau warm-up (tăng WARMUP) |
+| `C3_w2_fixed400_r1` | 835 iteration bị bỏ (thiếu VU sẵn sàng); CPU app ở phần ba đầu pha đo cao hơn phần ba cuối 137%: JVM chưa ấm hết sau warm-up (tăng WARMUP); 364 lệnh Redis (L2) lỗi trong lần chạy, 0 trong pha đo; 4 lần 409 ngoài dự kiến (VU nhớ sai version, hoặc server so với bản cũ trong cache) |
+| `C3_w2_fixed400_r2` | 823 iteration bị bỏ (thiếu VU sẵn sàng); CPU app ở phần ba đầu pha đo cao hơn phần ba cuối 103%: JVM chưa ấm hết sau warm-up (tăng WARMUP); 170 lệnh Redis (L2) lỗi trong lần chạy, 0 trong pha đo |
+| `C3_w2_fixed400_rprof` | 3145 iteration bị bỏ (thiếu VU sẵn sàng); CPU app ở phần ba đầu pha đo cao hơn phần ba cuối 132%: JVM chưa ấm hết sau warm-up (tăng WARMUP); 313 lệnh Redis (L2) lỗi trong lần chạy, 0 trong pha đo; 2 lần 409 ngoài dự kiến (VU nhớ sai version, hoặc server so với bản cũ trong cache) |
 | `C3_w3_capacityauto_r2` | k6 dùng tới 0.83 CPU (> 0.8): máy tạo tải có thể là nút thắt |
+| `C3_w3_fixed20_r2` | 16 lệnh Redis (L2) lỗi trong lần chạy, 0 trong pha đo |
+| `C3_w3_fixed20_rprof` | CPU app ở phần ba đầu pha đo cao hơn phần ba cuối 26%: JVM chưa ấm hết sau warm-up (tăng WARMUP) |
 
 ## W1
 

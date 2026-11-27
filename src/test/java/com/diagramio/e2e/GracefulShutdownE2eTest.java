@@ -86,6 +86,7 @@ class GracefulShutdownE2eTest {
 
         String token = login(port);
         String id = createDiagram(port, token);
+        String other = createDiagram(port, token);
         assertThat(send(port, "GET", "/diagrams/" + id, token, null).statusCode()).isEqualTo(200);   // vào L1
 
         var postgres = E2eTestBase.postgres;
@@ -101,12 +102,21 @@ class GracefulShutdownE2eTest {
                     updateBody(1, "Saved while shutting down"));
             awaitUpdateWaitingForTheLock();
 
+            HttpClient keepAlive = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build();
+            assertThat(keepAlive.send(request(port, "GET", "/diagrams/" + other, token, null),
+                    HttpResponse.BodyHandlers.ofString()).statusCode()).isEqualTo(200);   // kết nối được giữ lại
+
             CompletableFuture<Void> shutdown = CompletableFuture.runAsync(app::close);
 
             // Trong lúc chờ request: không nhận traffic mới, không nhận kết nối mới, vẫn nhận thông báo hủy L1
             await(() -> availability.getReadinessState() == ReadinessState.REFUSING_TRAFFIC, "readiness turns off");
             assertThat(availability.getLivenessState()).isEqualTo(LivenessState.CORRECT);
             await(() -> !accepts(port), "the API port stops accepting new connections");
+            // Request mới gửi vào một kết nối đã mở trong lúc tắt: Tomcat đóng kết nối (hoặc trả 503) mà không xử lý.
+            // Gửi lại sang instance khác vì vậy luôn an toàn, nhưng Nginx không gửi lại POST, PATCH đã gửi đi: hai phương
+            // thức đó đi kết nối mới (deploy/nginx/http.conf), bị từ chối ngay ở bước kết nối, trước khi gửi request.
+            assertThat(notServed(keepAlive, request(port, "PUT", "/diagrams/" + other, token,
+                    updateBody(1, "Sent on a kept connection while draining")))).isTrue();
             assertThat(shutdown).isNotDone();
             assertThat(monitor.isRunning()).as("Redis monitor still running while requests drain").isTrue();
             assertThat(cache.localTrusted()).isTrue();
@@ -121,6 +131,7 @@ class GracefulShutdownE2eTest {
 
         // Ghi xong trong lúc tắt vẫn tới được Redis: instance khác sẽ không đọc bản cũ còn trên đó
         assertThat(redisField(id, "v")).isEqualTo("2");
+        assertThat(versionInDatabase(other)).isEqualTo(1);   // PUT gửi vào kết nối cũ không được xử lý
         assertThat(monitor.isRunning()).isFalse();
         assertThat(cache.localTrusted()).isFalse();
         assertThat(accepts(port)).isFalse();
@@ -172,6 +183,29 @@ class GracefulShutdownE2eTest {
                     throw new IllegalStateException(e);
                 }
             }, "the PUT waits for the row lock");
+        }
+    }
+
+    /** Không có response 2xx: kết nối bị đóng (IOException) hoặc 503. */
+    private static boolean notServed(HttpClient client, HttpRequest request) throws InterruptedException {
+        try {
+            int status = client.send(request, HttpResponse.BodyHandlers.ofString()).statusCode();
+            return status == 503;
+        } catch (IOException e) {
+            return true;
+        }
+    }
+
+    private static int versionInDatabase(String id) throws SQLException {
+        var postgres = E2eTestBase.postgres;
+        try (Connection connection = DriverManager.getConnection(postgres.getJdbcUrl(), postgres.getUsername(),
+                postgres.getPassword());
+             PreparedStatement select = connection.prepareStatement("SELECT version FROM diagrams WHERE id = ?::uuid")) {
+            select.setString(1, id);
+            try (ResultSet rs = select.executeQuery()) {
+                rs.next();
+                return rs.getInt(1);
+            }
         }
     }
 

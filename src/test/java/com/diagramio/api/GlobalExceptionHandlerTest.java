@@ -9,6 +9,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.diagramio.domain.exception.ConflictException;
 import com.diagramio.domain.exception.NotFoundException;
+import com.diagramio.domain.exception.ServiceUnavailableException;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.MediaType;
@@ -34,6 +35,11 @@ class GlobalExceptionHandlerTest {
             throw new ConflictException("Stale version");
         }
 
+        @GetMapping("/unavailable")
+        void unavailable() {
+            throw new ServiceUnavailableException("Share links cannot be changed right now, please retry");
+        }
+
         @GetMapping("/duplicate")
         void duplicate() {
             throw new DataIntegrityViolationException("duplicate key value violates unique constraint \"users_email_key\"");
@@ -51,6 +57,17 @@ class GlobalExceptionHandlerTest {
     private final MockMvc mockMvc = MockMvcBuilders.standaloneSetup(new ThrowingController())
             .setControllerAdvice(new GlobalExceptionHandler())
             .build();
+
+    @Test
+    void serviceUnavailableBecomes503WithRetryAfter() throws Exception {
+        mockMvc.perform(get("/unavailable"))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(header().string("Retry-After", "1"))
+                .andExpect(jsonPath("$.status").value(503))
+                .andExpect(jsonPath("$.error").value("Service Unavailable"))
+                .andExpect(jsonPath("$.message").value("Share links cannot be changed right now, please retry"))
+                .andExpect(jsonPath("$.path").value("/unavailable"));
+    }
 
     @Test
     void notFoundExceptionBecomes404() throws Exception {

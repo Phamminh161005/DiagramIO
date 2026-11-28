@@ -1,8 +1,9 @@
 package com.diagramio.api.version.dto;
 
+import com.diagramio.api.RawJsonSerializer;
 import com.diagramio.domain.diagram.Diagram;
 import com.diagramio.domain.version.RestoreResult;
-import com.fasterxml.jackson.annotation.JsonRawValue;
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 import io.swagger.v3.oas.annotations.media.Schema;
 import java.time.Instant;
 import java.util.UUID;
@@ -12,7 +13,7 @@ import java.util.UUID;
  * snapshot sao lưu tự động của trạng thái ngay trước khi khôi phục.
  */
 public record RestoreVersionResponse(UUID diagramId, String title, String diagramType,
-                                     @JsonRawValue
+                                     @JsonSerialize(using = RawJsonSerializer.class)
                                      @Schema(types = "object", implementation = Object.class, example = "{\"nodes\": [], \"edges\": []}")
                                      String data,
                                      Integer version, Instant updatedAt,

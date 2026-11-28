@@ -1,0 +1,2 @@
+xact_commit,xact_rollback,blks_read,blks_hit,tup_returned,tup_fetched,tup_inserted,tup_updated,tup_deleted,temp_bytes,deadlocks,blk_read_ms,active_ms
+168797,0,77,79809063,491775155,22381543,59792,9120,35542,0,0,1.250,1409429.598

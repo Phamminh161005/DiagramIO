@@ -1,7 +1,8 @@
 package com.diagramio.api.share.dto;
 
+import com.diagramio.api.RawJsonSerializer;
 import com.diagramio.domain.share.SharedDiagramView;
-import com.fasterxml.jackson.annotation.JsonRawValue;
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 import io.swagger.v3.oas.annotations.media.Schema;
 
 import java.time.Instant;
@@ -19,7 +20,7 @@ public record SharedDiagramResponse(
 
         @Schema(description = "Cấu trúc dữ liệu các node và edge của sơ đồ",
                 types = "object", implementation = Object.class, example = "{\"nodes\": [], \"edges\": []}")
-        @JsonRawValue
+        @JsonSerialize(using = RawJsonSerializer.class)
         String data,
 
         @Schema(description = "Quyền hạn của token truy cập này (view hoặc edit)")

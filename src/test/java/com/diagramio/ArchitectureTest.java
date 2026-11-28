@@ -21,7 +21,10 @@ class ArchitectureTest {
                         "org.springframework..",
                         "jakarta.persistence..",
                         "jakarta.servlet..",
-                        "org.hibernate..")
+                        "org.hibernate..",
+                        "com.github.benmanes.caffeine..",
+                        "io.lettuce..",
+                        "io.micrometer..")
                 .because("tầng nghiệp vụ chỉ được dùng Java thuần")
                 .check(classes);
     }

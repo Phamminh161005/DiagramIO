@@ -6,10 +6,15 @@ import com.diagramio.domain.access.Caller;
 import com.diagramio.domain.diagram.Diagram;
 import com.diagramio.domain.diagram.DiagramData;
 import com.diagramio.domain.diagram.DiagramRepository;
+import com.diagramio.domain.diagram.DiagramService;
 import com.diagramio.domain.diagram.DiagramType;
 import com.diagramio.domain.version.DiagramVersion;
+import com.diagramio.domain.exception.OptimisticLockConflictException;
 import com.diagramio.domain.version.DiagramVersionService;
+import com.diagramio.domain.version.DiagramVersionSummary;
 import com.diagramio.domain.version.RestoreResult;
+import com.diagramio.TestDatabase;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
@@ -33,6 +38,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 /**
  * Nhiều luồng gọi lưu/khôi phục cùng lúc trên PostgreSQL thật: các yêu cầu phải xếp hàng
  * (khóa dòng sơ đồ) và đều thành công, số thứ tự phiên bản tăng tuyến tính 1..n.
+ * Nhiều luồng cùng sửa từ một version: đúng một người thắng, còn lại 409 (UPDATE có điều kiện).
  * Bỏ qua khi máy không có Docker.
  */
 @SpringBootTest
@@ -41,7 +47,7 @@ class DiagramVersionConcurrencyTest {
 
     @Container
     @ServiceConnection
-    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:15-alpine");
+    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>(TestDatabase.POSTGRES_IMAGE);
 
     /** Người dùng mẫu được seed trong V2. */
     private static final UUID SEED_USER = UUID.fromString("11111111-1111-1111-1111-111111111111");
@@ -54,6 +60,9 @@ class DiagramVersionConcurrencyTest {
 
     @Autowired
     private DiagramRepository diagramRepository;
+
+    @Autowired
+    private DiagramService diagramService;
 
     @Test
     void concurrentSavesQueueUpAndAllGetLinearNumbers() throws Exception {
@@ -71,28 +80,71 @@ class DiagramVersionConcurrencyTest {
         Diagram diagram = newDiagram(DATA_A);
         DiagramVersion snapshotA = versionService.createVersion(diagram.getId(), "A", null, OWNER);
         diagram.setData(DATA_B);
-        int versionBefore = diagramRepository.save(diagram).getVersion();
+        int versionBefore = diagramRepository.updateIfVersion(diagram, true).orElseThrow().getVersion();
 
         List<RestoreResult> results = runConcurrently(10,
                 i -> () -> versionService.restore(diagram.getId(), snapshotA.id(), OWNER));
 
         List<DiagramVersion> backups = results.stream().map(RestoreResult::backup)
                 .sorted((a, b) -> Integer.compare(a.versionNumber(), b.versionNumber()))
+                .map(b -> versionService.getVersion(diagram.getId(), b.id(), OWNER))
                 .toList();
         // Lần khôi phục đầu tiên sao lưu B; các lần sau sao lưu A (trạng thái lần trước để lại)
         assertThat(backups.get(0).data().json()).contains("\"B\"");
         assertThat(backups.subList(1, backups.size())).allSatisfy(b -> assertThat(b.data().json()).contains("\"A\""));
         assertThat(backups).extracting(DiagramVersion::versionNumber)
                 .isEqualTo(IntStream.rangeClosed(2, 11).boxed().toList());
+        assertThat(results).extracting(r -> r.diagram().getVersion()).doesNotHaveDuplicates()
+                .allSatisfy(v -> assertThat(v).isBetween(versionBefore + 1, versionBefore + 10));
 
         Diagram restored = diagramRepository.findById(diagram.getId()).orElseThrow();
         assertThat(restored.getVersion()).isEqualTo(versionBefore + 10);
         assertThat(restored.getData().json()).contains("\"A\"");
     }
 
+    @Test
+    void concurrentUpdatesFromTheSameVersionHaveExactlyOneWinner() throws Exception {
+        UUID diagramId = newDiagram(DATA_A).getId();
+        int n = 20;
+
+        List<Object> outcomes = runConcurrently(n, i -> () -> {
+            try {
+                return diagramService.updateDiagram(diagramId, "writer " + i, DiagramType.ERD,
+                        DiagramData.of("{\"nodes\": [{\"id\": \"w" + i + "\"}], \"edges\": []}"), false, OWNER, 1);
+            } catch (OptimisticLockConflictException e) {
+                return e;
+            }
+        });
+
+        List<Diagram> winners = outcomes.stream().filter(Diagram.class::isInstance).map(Diagram.class::cast).toList();
+        assertThat(winners).hasSize(1);
+        assertThat(outcomes).filteredOn(OptimisticLockConflictException.class::isInstance).hasSize(n - 1)
+                .allSatisfy(e -> assertThat(((OptimisticLockConflictException) e).getCurrentVersion()).isEqualTo(2));
+        Diagram stored = diagramRepository.findById(diagramId).orElseThrow();
+        assertThat(stored.getVersion()).isEqualTo(2);
+        assertThat(stored.getTitle()).isEqualTo(winners.get(0).getTitle());
+        assertThat(new ObjectMapper().readTree(stored.getData().json()))
+                .isEqualTo(new ObjectMapper().readTree(winners.get(0).getData().json()));
+    }
+
+    @Test
+    void snapshotsAndRestoresWhileEditingNeverLoseAWrite() throws Exception {
+        Diagram diagram = newDiagram(DATA_A);
+        DiagramVersion snapshotA = versionService.createVersion(diagram.getId(), "A", null, OWNER);
+
+        // Lưu và khôi phục xen kẽ: đều khóa dòng nên xếp hàng, số phiên bản vẫn liên tục, không trùng
+        runConcurrently(12, i -> () -> i % 2 == 0
+                ? versionService.createVersion(diagram.getId(), "save " + i, null, OWNER)
+                : versionService.restore(diagram.getId(), snapshotA.id(), OWNER));
+
+        List<Integer> numbers = versionService.listVersions(diagram.getId(), OWNER).stream()
+                .map(DiagramVersionSummary::versionNumber).toList();
+        assertThat(numbers).isEqualTo(IntStream.rangeClosed(1, 13).boxed().sorted((a, b) -> b - a).toList());
+    }
+
     private Diagram newDiagram(DiagramData data) {
         Instant now = Instant.now().truncatedTo(ChronoUnit.MICROS);
-        return diagramRepository.save(new Diagram(null, "race", DiagramType.ERD, data, 1, false, SEED_USER, SEED_USER, now, now));
+        return diagramRepository.insert(new Diagram(null, "race", DiagramType.ERD, data, 1, false, SEED_USER, SEED_USER, now, now));
     }
 
     /** Chạy n tác vụ cùng một thời điểm và trả về kết quả; ném lỗi nếu có tác vụ thất bại. */

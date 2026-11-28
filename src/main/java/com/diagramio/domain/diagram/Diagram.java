@@ -38,6 +38,11 @@ public class Diagram {
         return ownerId != null && ownerId.equals(userId);
     }
 
+    /** Phần dùng để kiểm tra quyền và chống ghi đè (không có data). */
+    public DiagramAccessInfo accessInfo() {
+        return new DiagramAccessInfo(id, ownerId, isPublic, version == null ? 0 : version);
+    }
+
     /**
      * Đổi metadata (tên, loại). Tách khỏi nội dung vì hai phần thay đổi theo cách khác nhau:
      * metadata ít đổi, nội dung đổi liên tục (pha 2: sửa theo từng thao tác, cộng tác thời gian thực).
@@ -49,8 +54,10 @@ public class Diagram {
     }
 
     /**
-     * Thay toàn bộ nội dung (nodes, edges). Mọi thay đổi nội dung (cập nhật sơ đồ, khôi phục phiên bản)
-     * đi qua đúng phương thức này, để pha 2 thêm sửa theo thao tác, sự kiện hay cache ở một chỗ.
+     * Thay toàn bộ nội dung (nodes, edges) khi người dùng sửa sơ đồ. Khôi phục phiên bản chép data ngay trong CSDL
+     * ({@link DiagramRepository#restoreContent}), không qua đây. Mọi thay đổi được ghi xuống đều đi qua
+     * {@link DiagramRepository} ({@code updateIfVersion}, {@code restoreContent}, {@code deleteById}), nên cache
+     * và sự kiện của pha 2 gắn ở tầng đó.
      */
     public void replaceContent(DiagramData newData, UUID changedBy, Instant changedAt) {
         this.data = newData;

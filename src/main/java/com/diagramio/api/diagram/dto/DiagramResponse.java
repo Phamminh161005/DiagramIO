@@ -1,7 +1,8 @@
 package com.diagramio.api.diagram.dto;
 
+import com.diagramio.api.RawJsonSerializer;
 import com.diagramio.domain.diagram.Diagram;
-import com.fasterxml.jackson.annotation.JsonRawValue;
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 import io.swagger.v3.oas.annotations.media.Schema;
 import java.time.Instant;
 import java.util.UUID;
@@ -10,7 +11,7 @@ public record DiagramResponse(
         UUID id,
         String title,
         String diagramType,
-        @JsonRawValue
+        @JsonSerialize(using = RawJsonSerializer.class)
         @Schema(types = "object", implementation = Object.class, example = "{\"nodes\": [], \"edges\": []}")
         String data,
         Integer version,

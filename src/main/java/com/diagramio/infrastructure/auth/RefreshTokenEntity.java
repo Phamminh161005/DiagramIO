@@ -5,13 +5,18 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.Transient;
 import java.time.Instant;
 import java.util.UUID;
+import org.springframework.data.domain.Persistable;
 
-/** Ánh xạ bảng refresh_tokens. Giữ user_id dạng UUID, không map quan hệ cho đơn giản. */
+/**
+ * Ánh xạ bảng refresh_tokens. Giữ user_id dạng UUID, không map quan hệ cho đơn giản.
+ * Cờ {@code inserting} cho Spring Data gọi persist (một câu INSERT) thay vì merge khi thêm token mới.
+ */
 @Entity
 @Table(name = "refresh_tokens")
-public class RefreshTokenEntity {
+public class RefreshTokenEntity implements Persistable<UUID> {
 
     @Id
     private UUID id;
@@ -28,6 +33,9 @@ public class RefreshTokenEntity {
     @Column(nullable = false)
     private boolean revoked;
 
+    @Transient
+    private boolean inserting;
+
     protected RefreshTokenEntity() {
         // JPA cần constructor không tham số
     }
@@ -40,6 +48,22 @@ public class RefreshTokenEntity {
         entity.expiresAt = token.expiresAt();
         entity.revoked = token.revoked();
         return entity;
+    }
+
+    static RefreshTokenEntity forInsert(RefreshToken token) {
+        RefreshTokenEntity entity = fromDomain(token);
+        entity.inserting = true;
+        return entity;
+    }
+
+    @Override
+    public UUID getId() {
+        return id;
+    }
+
+    @Override
+    public boolean isNew() {
+        return inserting;
     }
 
     RefreshToken toDomain() {

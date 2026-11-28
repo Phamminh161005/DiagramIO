@@ -30,7 +30,8 @@ Mỗi request đi qua hai filter trước khi tới controller: filter JWT, sau 
 
 ![Xác thực một request](diagrams/1-xac-thuc-request.drawio.svg)
 
-- JWT hợp lệ là JWT có chữ ký đúng và chưa hết hạn. "Có token chia sẻ" nghĩa là request có header `X-Share-Token` và token đó vẫn còn trong bảng `diagram_shares`.
+- JWT hợp lệ là JWT có chữ ký đúng và chưa hết hạn. "Có token chia sẻ" nghĩa là request có header `X-Share-Token` và token đó vẫn còn trong bảng `diagram_shares`. Kết quả tra token được cache (khóa là SHA-256 của token, [ADR-0004](adr/0004-cache-token-chia-se.md)) nhưng thu hồi và đổi quyền vẫn có hiệu lực ngay từ request tiếp theo, ở mọi instance.
+- Trước cả hai filter, body lớn hơn 4 MB bị từ chối với 413 mà không đọc (không thì một body vài chục MB bị parse hết rồi mới bị từ chối, vài request như vậy làm app hết bộ nhớ).
 - Endpoint công khai gồm đăng ký, đăng nhập, refresh token, `/health`, `/shares/{token}`, Swagger, `GET /diagrams/public` và `GET /diagrams/{id}`. Với `GET /diagrams/{id}`, người chưa đăng nhập vẫn vào được controller, sau đó service mới quyết định có cho xem hay không.
 - Bước "Đủ quyền, dữ liệu đúng?" là phần kiểm tra trong service: dữ liệu gửi lên có đúng định dạng (400), quyền theo `Caller` qua `DiagramAccess` (mục 2, không đủ thì 403, hoặc 401 nếu người gọi không có tài khoản lẫn link của sơ đồ), sơ đồ có tồn tại (404), version có khớp (409). Các mục sau mô tả chi tiết phần này cho từng luồng.
 - Người đã đăng nhập mà vẫn gửi `X-Share-Token` thì hai thông tin được gộp lại. Nhờ vậy chủ sơ đồ mở link của chính mình vẫn giữ quyền chủ, và người sửa có đăng nhập vẫn được ghi vào `updated_by`.
@@ -40,7 +41,7 @@ Mỗi request đi qua hai filter trước khi tới controller: filter JWT, sau 
 
 Endpoint: các endpoint thao tác trên một sơ đồ.
 
-Toàn bộ luật quyền nằm trong `domain/access/Caller`. Service chỉ cần gọi `canView`, `canViewHistory`, `canEdit` hoặc `canManage`, không cần biết người gọi dùng JWT hay link chia sẻ.
+Toàn bộ luật quyền nằm trong `domain/access/Caller` (`canView`, `canViewHistory`, `canEdit`, `canManage`). Service không gọi trực tiếp các hàm này mà gọi `DiagramAccess` với mức quyền cần (`VIEW`, `VIEW_HISTORY`, `EDIT`, `MANAGE`), nên không cần biết người gọi dùng JWT hay link chia sẻ, và mọi module trả cùng mã lỗi 404/401/403. Kiểm tra quyền chỉ đọc chủ, cờ công khai và version của sơ đồ, không đọc `data`.
 
 ![Phân quyền theo Caller](diagrams/2-phan-quyen.drawio.svg)
 
@@ -71,10 +72,11 @@ Nhiều người có thể sửa cùng một sơ đồ. Vì vậy client phải 
 ![Cập nhật sơ đồ](diagrams/4-cap-nhat-so-do.drawio.svg)
 
 - "Hợp lệ" gồm hai việc: đã xác thực bằng JWT hoặc `X-Share-Token` (không thì 401), và body đúng: `title` không rỗng, `diagramType` là UML hoặc ERD, có `version` và `data` (không thì 400).
-- "Được sửa" gồm sơ đồ có tồn tại (không thì 404) và `caller.canEdit`, tức là chủ hoặc người có link edit (không thì 403). "Đúng version" là `version` gửi lên bằng `version` trong DB.
+- "Được sửa" gồm sơ đồ có tồn tại (không thì 404) và quyền `EDIT`, tức là chủ hoặc người có link edit (không thì 403). "Đúng version" là `version` gửi lên bằng `version` trong DB.
 - `data` phải là object có mảng `nodes` và `edges`, tối đa 2 MB.
-- Khi lưu, chỉ chủ đổi được `isPublic`; người sửa qua link gửi giá trị khác thì vẫn giữ giá trị cũ. `updatedBy` là người đăng nhập, để NULL nếu sửa qua link mà không đăng nhập.
-- Có hai lớp chống ghi đè: so sánh version trong code, và điều kiện `WHERE version = ...` của JPA `@Version` lúc ghi. Lớp thứ hai bắt được trường hợp hai request cùng qua bước so sánh gần như cùng lúc.
+- Khi lưu, chỉ chủ đổi được `isPublic`; người sửa qua link gửi giá trị khác thì vẫn giữ giá trị đang có trong DB (câu ghi không chạm cột này). `updatedBy` là người đăng nhập, để NULL nếu sửa qua link mà không đăng nhập.
+- Có hai lớp chống ghi đè. Bước kiểm tra trong code chỉ từ chối ngay (409, không ghi) khi `version` gửi lên **nhỏ hơn** version đọc được lúc kiểm tra quyền. Version đó có thể lấy từ cache nên có thể chậm hơn DB, nhưng không bao giờ đi trước DB. Quyết định cuối cùng là chính câu ghi, một lệnh `UPDATE ... WHERE id = ? AND version = ?` (B1). Nó bắt được hai trường hợp: hai request cùng qua bước kiểm tra gần như cùng lúc, và cache chậm hơn DB. Câu `UPDATE` không khớp dòng nào thì trả 409 kèm version hiện tại trong DB, không cần transaction hay khóa.
+- Sau khi ghi, trạng thái mới được ghi vào cache, chỉ khi version mới hơn bản đang có ([ADR-0003](adr/0003-cache-hai-tang-etag.md)). Response có `ETag: W/"<version>"`; client mở lại sơ đồ với `If-None-Match` thì nhận 304 nếu chưa ai sửa (quyền vẫn được kiểm tra trước).
 - Khi nhận 409, client tải lại sơ đồ bằng `GET` để lấy version mới rồi sửa lại.
 
 ## 5. Lưu phiên bản (snapshot)
@@ -88,7 +90,7 @@ Snapshot là bản chụp cố định của `data` tại thời điểm lưu, �
 - "Ghi chú hợp lệ" là `note` không quá 255 ký tự. "Được sửa" giống mục 4. "Đúng version" chỉ được kiểm tra khi client có gửi `version`.
 - Từ bước khóa dòng tới bước lưu snapshot chạy trong một transaction. Dòng sơ đồ bị khóa bằng `SELECT ... FOR UPDATE` nên các request lưu cùng lúc trên cùng sơ đồ phải xếp hàng, không ai lấy trùng số thứ tự. Ràng buộc `UNIQUE (diagram_id, version_number)` là lớp bảo vệ cuối cùng, nếu vẫn trùng thì trả 409.
 - Trường `version` gửi kèm giúp tránh tình huống: An vừa `PUT` xong, Bình sửa chen vào, rồi request lưu của An lại chụp nhầm nội dung của Bình. Việc so version diễn ra sau khi đã khóa, nên không ai chen vào được giữa lúc so và lúc chụp.
-- Snapshot lưu `data` hiện tại, ghi chú và `createdBy` (để NULL nếu tạo qua link mà không đăng nhập).
+- Snapshot lưu `data` hiện tại, ghi chú và `createdBy` (để NULL nếu tạo qua link mà không đăng nhập). `data` được chép ngay trong CSDL bằng một câu `INSERT ... SELECT` (cả số thứ tự cũng tính trong câu đó), không đi qua app.
 
 ## 6. Khôi phục phiên bản
 
@@ -101,6 +103,7 @@ Khôi phục là chép `data` của một snapshot cũ vào sơ đồ hiện t�
 - "Được sửa" giống mục 4. "Phiên bản hợp lệ" là phiên bản tồn tại và thuộc đúng sơ đồ này.
 - Toàn bộ luồng chạy trong một transaction. Bản sao lưu được tạo trước rồi mới ghi đè, nên không bao giờ có lúc sơ đồ đã bị ghi đè mà chưa có bản sao lưu. Bản sao lưu có ghi chú `Auto backup before restoring version N`.
 - Chỉ phần `data` được khôi phục; tiêu đề, loại sơ đồ và `isPublic` giữ nguyên. Các snapshot cũ không bị sửa hay xóa.
+- Cả bản sao lưu lẫn việc ghi đè đều chép `data` ngay trong CSDL (`INSERT ... SELECT`, `UPDATE ... FROM`); `data` chỉ đi lên app một lần để trả response.
 - Response trả về cả sơ đồ sau khi khôi phục và snapshot sao lưu vừa tạo.
 
 ## 7. Vòng đời link chia sẻ
@@ -113,6 +116,6 @@ Chia sẻ hoạt động giống Google Docs: chủ sơ đồ tạo link với q
 
 - Token là chuỗi ngẫu nhiên 24 byte (48 ký tự hex), `role` là `view` hoặc `edit`.
 - `shareUrl` được tạo từ địa chỉ server đang nhận request (localhost, Docker hay máy chủ thật) và trỏ tới `GET /shares/{token}`, vì pha 1 chưa có frontend.
-- Thu hồi xóa hẳn link, nên từ request sau mở link sẽ nhận 404 và header `X-Share-Token` bị bỏ qua.
+- Thu hồi xóa hẳn link, nên từ request sau mở link sẽ nhận 404 và header `X-Share-Token` bị bỏ qua. Điều này giữ nguyên khi có cache token và khi chạy nhiều instance: trước khi thu hồi hay đổi quyền, link được đánh dấu "đang đổi" trên cache dùng chung; nếu không đánh dấu được (Redis lỗi) thì thao tác trả 503 và link giữ nguyên, thay vì báo đã thu hồi trong khi instance khác còn cho token đi qua.
 - Người dùng link mà không đăng nhập thì `updated_by` và `created_by` để NULL. Nhiều người dùng chung một link thì không phân biệt được ai với ai; việc này để sang pha 2, khi làm cộng tác thời gian thực.
 - Chỉ chủ sơ đồ quản lý được link. Các endpoint `/shares` cần tài khoản, nên người chỉ cầm link (kể cả link edit) nhận 401; người đăng nhập nhưng không phải chủ nhận 403.

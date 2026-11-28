@@ -1,26 +1,30 @@
 package com.diagramio.domain.version;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
-/** Chỉ thêm và đọc: không có update/delete để giữ snapshot bất biến. */
+/**
+ * Chỉ thêm và đọc: không có update/delete để giữ snapshot bất biến. Snapshot được chép thẳng từ dòng sơ đồ ngay
+ * trong CSDL (INSERT ... SELECT), data không phải đi lên app rồi đi xuống lại.
+ *
+ * <p>Hai phương thức chụp phải được gọi trong transaction đã khóa dòng sơ đồ ({@code DiagramAccess.requireLocked}),
+ * để số thứ tự tăng tuyến tính và snapshot là trạng thái mới nhất.
+ */
 public interface DiagramVersionRepository {
 
-    /**
-     * Khóa dòng sơ đồ đến hết transaction hiện tại. Các yêu cầu lưu/khôi phục phiên bản
-     * của cùng một sơ đồ vì vậy xếp hàng lần lượt thay vì tranh nhau số thứ tự rồi bị 409.
-     */
-    void lockDiagram(UUID diagramId);
+    /** Chụp data hiện tại của sơ đồ thành phiên bản số (lớn nhất + 1); trả về phiên bản kèm data. */
+    DiagramVersion snapshot(UUID versionId, UUID diagramId, String note, UUID createdBy, Instant createdAt);
 
-    /** Thêm snapshot mới; ném ConflictException nếu versionNumber đã tồn tại cho sơ đồ. */
-    DiagramVersion save(DiagramVersion version);
+    /** Như {@link #snapshot} nhưng chỉ trả tóm tắt, khi không cần data (bản sao lưu trước khi khôi phục). */
+    DiagramVersionSummary snapshotSummary(UUID versionId, UUID diagramId, String note, UUID createdBy,
+                                          Instant createdAt);
 
-    /** Các snapshot của sơ đồ, mới nhất trước. */
-    List<DiagramVersion> findByDiagramId(UUID diagramId);
+    /** Các phiên bản của sơ đồ, mới nhất trước, không kèm data. */
+    List<DiagramVersionSummary> findSummaries(UUID diagramId);
+
+    Optional<DiagramVersionSummary> findSummary(UUID id, UUID diagramId);
 
     Optional<DiagramVersion> findByIdAndDiagramId(UUID id, UUID diagramId);
-
-    /** Số thứ tự snapshot lớn nhất của sơ đồ, 0 nếu chưa có. */
-    int maxVersionNumber(UUID diagramId);
 }

@@ -27,6 +27,7 @@ import com.diagramio.domain.exception.NotFoundException;
 import com.diagramio.domain.exception.OptimisticLockConflictException;
 import com.diagramio.domain.version.DiagramVersion;
 import com.diagramio.domain.version.DiagramVersionService;
+import com.diagramio.domain.version.DiagramVersionSummary;
 import com.diagramio.domain.version.RestoreResult;
 import com.diagramio.domain.share.ShareService;
 import com.diagramio.infrastructure.security.JwtTokenProvider;
@@ -162,7 +163,7 @@ class DiagramVersionControllerTest {
     @Test
     void listReturnsSummariesWithoutData() throws Exception {
         when(versionService.listVersions(diagramId, Caller.user(ownerId)))
-                .thenReturn(List.of(version(UUID.randomUUID(), 2), version(versionId, 1)));
+                .thenReturn(List.of(summary(UUID.randomUUID(), 2), summary(versionId, 1)));
 
         mockMvc.perform(get(base).with(user(ownerId.toString())))
                 .andExpect(status().isOk())
@@ -205,7 +206,7 @@ class DiagramVersionControllerTest {
         UUID backupId = UUID.randomUUID();
         Diagram restored = new Diagram(diagramId, "Shop ERD", DiagramType.ERD, DATA, 6, false, ownerId, ownerId, NOW, NOW);
         when(versionService.restore(diagramId, versionId, Caller.user(ownerId)))
-                .thenReturn(new RestoreResult(restored, version(backupId, 8)));
+                .thenReturn(new RestoreResult(restored, summary(backupId, 8)));
 
         mockMvc.perform(post(base + "/" + versionId + "/restore").with(user(ownerId.toString())))
                 .andExpect(status().isOk())
@@ -230,6 +231,10 @@ class DiagramVersionControllerTest {
 
         mockMvc.perform(post(base + "/" + versionId + "/restore").with(user(ownerId.toString())))
                 .andExpect(status().isConflict());
+    }
+
+    private DiagramVersionSummary summary(UUID id, int number) {
+        return new DiagramVersionSummary(id, number, "note " + number, ownerId, NOW);
     }
 
     private DiagramVersion version(UUID id, int number) {

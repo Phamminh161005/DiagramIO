@@ -1,0 +1,4 @@
+C0 v2.0-m0 15f23569342c48f818ae3b38489420a5ec1f9814 
+C1 v2.1-b1 1383937b655450f3d29af93576a1d227af415fa5 
+C2 v2.2-b2 3aa8d6a5c5304e078c6963f7306e70e064e9ecaf --diagramio.cache.mode=local
+C3 v2.2-b2 3aa8d6a5c5304e078c6963f7306e70e064e9ecaf --diagramio.cache.mode=two-level

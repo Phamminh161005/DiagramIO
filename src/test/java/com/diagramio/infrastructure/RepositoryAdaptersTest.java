@@ -1,11 +1,15 @@
 package com.diagramio.infrastructure;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.diagramio.domain.auth.RefreshToken;
 import com.diagramio.domain.user.User;
 import com.diagramio.infrastructure.auth.RefreshTokenRepositoryAdapter;
 import com.diagramio.infrastructure.user.UserRepositoryAdapter;
+import com.diagramio.TestDatabase;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceException;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.UUID;
@@ -33,13 +37,16 @@ class RepositoryAdaptersTest {
 
     @Container
     @ServiceConnection
-    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:15-alpine");
+    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>(TestDatabase.POSTGRES_IMAGE);
 
     @Autowired
     private UserRepositoryAdapter users;
 
     @Autowired
     private RefreshTokenRepositoryAdapter refreshTokens;
+
+    @Autowired
+    private EntityManager entityManager;
 
     @Test
     void findsSeededSampleUser() {
@@ -56,12 +63,23 @@ class RepositoryAdaptersTest {
     }
 
     @Test
-    void savesNewUser() {
+    void insertsNewUser() {
         Instant createdAt = Instant.now().truncatedTo(ChronoUnit.MICROS);
-        User saved = users.save(new User(UUID.randomUUID(), "minh", "minh@gmail.com", "hash", createdAt));
+        User inserted = users.insert(new User(UUID.randomUUID(), "minh", "minh@gmail.com", "hash", createdAt));
+        entityManager.flush();
+        entityManager.clear();
 
-        assertThat(users.findByEmail("minh@gmail.com")).contains(saved);
+        assertThat(users.findByEmail("minh@gmail.com")).contains(inserted);
         assertThat(users.existsByUsername("minh")).isTrue();
+    }
+
+    @Test
+    void insertingAnExistingIdFailsInsteadOfOverwriting() {
+        // persist (không phải merge): id đã có thì vi phạm khóa chính, không lặng lẽ ghi đè người dùng cũ
+        assertThatThrownBy(() -> {
+            users.insert(new User(SAMPLE_USER_ID, "other", "other@gmail.com", "hash", Instant.now()));
+            entityManager.flush();
+        }).isInstanceOf(PersistenceException.class);
     }
 
     @Test
@@ -82,12 +100,15 @@ class RepositoryAdaptersTest {
         Instant expiresAt = Instant.now().plus(7, ChronoUnit.DAYS).truncatedTo(ChronoUnit.MICROS);
         RefreshToken token = new RefreshToken(UUID.randomUUID(), SAMPLE_USER_ID, "a".repeat(64), expiresAt, false);
 
-        refreshTokens.save(token);
+        refreshTokens.insert(token);
         assertThat(refreshTokens.findByTokenHash("a".repeat(64))).contains(token);
 
-        refreshTokens.save(token.revoke());
+        assertThat(refreshTokens.revoke(token.id())).isTrue();
         assertThat(refreshTokens.findByTokenHash("a".repeat(64)))
                 .hasValueSatisfying(t -> assertThat(t.revoked()).isTrue());
+        // thu hồi có điều kiện: lần thứ hai (request đồng thời dùng lại token) không đổi được gì
+        assertThat(refreshTokens.revoke(token.id())).isFalse();
+        assertThat(refreshTokens.revoke(UUID.randomUUID())).isFalse();
         assertThat(refreshTokens.findByTokenHash("b".repeat(64))).isEmpty();
     }
 }

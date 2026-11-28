@@ -1,0 +1,85 @@
+# Kiểm tra mỗi pull request và mỗi lần đẩy lên main: build và toàn bộ test (kể cả Testcontainers PostgreSQL, Redis và
+# E2E hai instance), lint các script của bộ đo, build image Docker. Không deploy, không push image.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Build và test (JDK 21, Testcontainers)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+      - name: Build và chạy toàn bộ test
+        run: ./mvnw -B -ntp verify
+      # Bảng số câu SQL mỗi endpoint (SqlPerRequestE2eTest): xem nhanh thay đổi của từng PR
+      - name: Lưu bảng SQL mỗi request
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sql-per-request
+          path: target/bench/sql-per-request.md
+          if-no-files-found: ignore
+      - name: Lưu báo cáo test khi lỗi
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports
+          path: target/surefire-reports/
+
+  bench-lint:
+    name: Lint script bộ đo
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck
+        run: shellcheck -x -S warning bench/kaggle/*.sh bench/collect/*.sh deploy/*.sh deploy/nginx/*.sh
+      - name: Cú pháp Python
+        run: find bench -name '*.py' -print0 | xargs -0 python3 -m py_compile
+
+  docker:
+    name: Build image Docker
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Kiểm tra docker-compose.yml
+        run: docker compose config --quiet
+      - name: Kiểm tra docker-compose.scale.yml (B4)
+        run: docker compose -f docker-compose.yml -f docker-compose.scale.yml config --quiet
+      # Đúng các file và đường dẫn mà docker-compose.scale.yml gắn vào container nginx; servers.conf nằm ở chỗ
+      # 40-diagramio-servers.sh chép nó tới lúc container khởi động
+      - name: Kiểm tra cấu hình Nginx (B4)
+        run: >-
+          docker run --rm
+          -v "$PWD/deploy/nginx/nginx.conf:/etc/nginx/nginx.conf:ro"
+          -v "$PWD/deploy/nginx/http.conf:/etc/nginx/diagramio/http.conf:ro"
+          -v "$PWD/deploy/nginx/server.conf:/etc/nginx/diagramio/server.conf:ro"
+          -v "$PWD/deploy/nginx/servers.conf:/etc/nginx/diagramio-runtime/servers.conf:ro"
+          nginx:1.28-alpine nginx -t
+      - uses: docker/setup-buildx-action@v3
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: diagramio-app:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

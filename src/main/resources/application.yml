@@ -12,16 +12,82 @@ spring:
       ddl-auto: validate # Schema do Flyway quản lý, Hibernate chỉ kiểm tra
   flyway:
     enabled: true
+  lifecycle:
+    # Tắt êm (B4, ADR-0006): thời gian tối đa chờ các request đang chạy xong; quá thì dừng hẳn. Docker phải cho
+    # dừng lâu hơn mức này (docker-compose.scale.yml: stop_grace_period) thì SIGKILL mới không cắt ngang.
+    timeout-per-shutdown-phase: ${SHUTDOWN_TIMEOUT:20s}
+  data:
+    redis:
+      # Chỉ dùng khi diagramio.cache.mode là redis hoặc two-level; host, port ghi đè bằng SPRING_DATA_REDIS_*.
+      # Thời gian chờ ngắn: Redis chậm hay chết thì cache chuyển sang đọc CSDL thay vì giữ request lại.
+      host: localhost
+      port: 6379
+      timeout: 250ms
+      connect-timeout: 500ms
+      repositories:
+        enabled: false
 
 server:
   # Sau proxy/load balancer: dùng X-Forwarded-Host/Proto để ghép đúng địa chỉ bên ngoài (vd. shareUrl)
   forward-headers-strategy: framework
+  # SIGTERM: ngừng nhận kết nối mới, readiness chuyển sang REFUSING_TRAFFIC, chờ request đang chạy xong rồi mới dừng
+  shutdown: graceful
+  tomcat:
+    # Cần cho số liệu luồng Tomcat (tomcat.threads.busy, tomcat.threads.current)
+    mbeanregistry:
+      enabled: true
+
+# Số liệu phía server cho phép đo pha 2 (docs/adr/0001-phuong-phap-do.md).
+# Actuator chạy trên cổng quản trị riêng và chỉ nghe localhost, nên không lộ ra ngoài qua cổng API;
+# SecurityConfig chỉ mở /actuator/health và /actuator/prometheus khi cổng quản trị khác cổng API.
+# Chạy nhiều bản app trên một máy thì mỗi bản đặt MANAGEMENT_PORT riêng.
+management:
+  server:
+    port: ${MANAGEMENT_PORT:9090}
+    address: 127.0.0.1
+  endpoints:
+    web:
+      exposure:
+        include: [health, prometheus]
+  endpoint:
+    health:
+      # /actuator/health/liveness và /actuator/health/readiness (B4): Docker, bộ đo và người vận hành biết một
+      # instance còn sống và có nhận traffic hay không. Readiness không gồm CSDL hay Redis: chúng dùng chung cho mọi
+      # instance, nên một sự cố của chúng không được làm cả cụm cùng "chưa sẵn sàng".
+      probes:
+        enabled: true
+  health:
+    redis:
+      # Cache tự chuyển sang CSDL khi mất Redis, nên Redis không quyết định app còn sống hay không
+      enabled: false
+  observations:
+    # Flame graph M0 (W2): quan sát từng filter của Spring Security và LongTaskTimer cho mỗi request tốn 7,9% CPU
+    # của app mà không có số liệu nào được dùng. http.server.requests vẫn đo như cũ.
+    enable:
+      spring.security: false
+    long-task-timer:
+      enabled: false
+  metrics:
+    distribution:
+      # Bucket histogram cho thời gian xử lý mỗi request, để tính p95 phía server theo từng cửa sổ thời gian
+      percentiles-histogram:
+        http.server.requests: true
+      minimum-expected-value:
+        http.server.requests: 1ms
+      maximum-expected-value:
+        http.server.requests: 10s
 
 springdoc:
   # Sắp xếp khóa cố định để docs/openapi.yaml xuất lại không bị đổi thứ tự
   writer-with-order-by-keys: true
   swagger-ui:
     path: /swagger-ui.html
+
+# Cache sơ đồ (B2, ADR-0003). mode: none | local | redis | two-level (ghi đè bằng DIAGRAMIO_CACHE_MODE).
+# local cho một instance; nhiều instance sau load balancer thì dùng two-level (cần Redis).
+diagramio:
+  cache:
+    mode: local
 
 jwt:
   secret: ${JWT_SECRET:dev-only-secret-please-change-it-32chars}

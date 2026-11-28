@@ -1,8 +1,12 @@
-# Chỉ cần pom.xml và src/ để build image
+# Image chỉ cần pom.xml và src/ (xem Dockerfile). Loại mọi thứ khác khỏi build context: kết quả đo trong
+# bench/results/ và dữ liệu cục bộ trong results/ lên tới hàng trăm MB, gửi kèm mỗi lần build là lãng phí.
 target/
 .git/
+.github/
 .vscode/
 .idea/
+bench/
+results/
 docs/
 *.md
 *.log

@@ -1,0 +1,7 @@
+relname,seq_scan,seq_tup_read,idx_scan,idx_tup_fetch,n_tup_ins,n_tup_upd,n_tup_hot_upd,n_tup_del,n_live_tup,n_dead_tup,autovacuum_count,autoanalyze_count
+diagram_shares,0,0,2492,2136,178,0,0,0,178,0,0,0
+diagram_versions,0,0,1306,2086,405,0,0,0,405,0,0,0
+diagrams,1861,46348738,14552,2267195,0,926,884,0,0,97,0,0
+flyway_schema_history,0,0,0,0,0,0,0,0,0,0,0,0
+refresh_tokens,152,13433,48,0,200,0,0,0,200,0,0,1
+users,0,0,805,805,0,0,0,0,0,0,0,0

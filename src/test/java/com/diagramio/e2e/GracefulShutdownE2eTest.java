@@ -24,10 +24,13 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BooleanSupplier;
+import org.apache.coyote.AbstractProtocol;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -35,6 +38,7 @@ import org.springframework.boot.availability.ApplicationAvailability;
 import org.springframework.boot.availability.LivenessState;
 import org.springframework.boot.availability.ReadinessState;
 import org.springframework.boot.builder.SpringApplicationBuilder;
+import org.springframework.boot.web.embedded.tomcat.TomcatWebServer;
 import org.springframework.boot.web.servlet.context.ServletWebServerApplicationContext;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.testcontainers.containers.GenericContainer;
@@ -47,6 +51,10 @@ import org.testcontainers.containers.GenericContainer;
  *
  * <p>PUT được giữ lại một cách tất định: test khóa dòng của sơ đồ trong một transaction riêng, câu UPDATE có điều kiện
  * của PUT phải chờ khóa đó.
+ *
+ * <p>Tắt có hai giai đoạn, test kiểm cả hai theo trạng thái thật của connector chứ không theo thời gian: cổng nghe đóng
+ * trước ({@code ShutdownConfig}) và request trên kết nối đã nhận vẫn được phục vụ trong {@code accept-grace}; sau đó
+ * Spring Boot tạm dừng connector và request mới trên kết nối cũ không được xử lý.
  */
 class GracefulShutdownE2eTest {
 
@@ -68,7 +76,9 @@ class GracefulShutdownE2eTest {
 
     @Test
     void requestInFlightFinishesAndReachesRedisWhileTheInstanceStopsTakingTraffic() throws Exception {
-        ConfigurableApplicationContext app = instance();
+        // accept-grace dài để giai đoạn đầu của lúc tắt không phụ thuộc tốc độ máy (kết nối tới cổng đã đóng trên
+        // Windows mất tới vài trăm ms mới báo lỗi)
+        ConfigurableApplicationContext app = instance("--diagramio.http.shutdown-accept-grace=3s");
         try {
             drainWithARequestInFlight(app);
         } finally {
@@ -78,6 +88,8 @@ class GracefulShutdownE2eTest {
 
     private void drainWithARequestInFlight(ConfigurableApplicationContext app) throws Exception {
         int port = ((ServletWebServerApplicationContext) app).getWebServer().getPort();
+        AbstractProtocol<?> api = (AbstractProtocol<?>) ((TomcatWebServer) ((ServletWebServerApplicationContext) app)
+                .getWebServer()).getTomcat().getService().findConnectors()[0].getProtocolHandler();
         DiagramCache cache = app.getBean(DiagramCache.class);
         RedisCacheMonitor monitor = app.getBean(RedisCacheMonitor.class);
         ApplicationAvailability availability = app.getBean(ApplicationAvailability.class);
@@ -112,9 +124,16 @@ class GracefulShutdownE2eTest {
             await(() -> availability.getReadinessState() == ReadinessState.REFUSING_TRAFFIC, "readiness turns off");
             assertThat(availability.getLivenessState()).isEqualTo(LivenessState.CORRECT);
             await(() -> !accepts(port), "the API port stops accepting new connections");
-            // Request mới gửi vào một kết nối đã mở trong lúc tắt: Tomcat đóng kết nối (hoặc trả 503) mà không xử lý.
-            // Gửi lại sang instance khác vì vậy luôn an toàn, nhưng Nginx không gửi lại POST, PATCH đã gửi đi: hai phương
-            // thức đó đi kết nối mới (deploy/nginx/http.conf), bị từ chối ngay ở bước kết nối, trước khi gửi request.
+            // Giai đoạn 1 (ShutdownConfig): cổng nghe đã đóng nhưng connector chưa tạm dừng. Kết nối đã nhận vẫn được
+            // phục vụ như bình thường, để request đã tới instance không bị đóng mà không xử lý.
+            assertThat(api.isPaused()).as("connector paused before the accept grace ends").isFalse();
+            assertThat(keepAlive.send(request(port, "GET", "/diagrams/" + other, token, null),
+                    HttpResponse.BodyHandlers.ofString()).statusCode()).isEqualTo(200);
+            // Giai đoạn 2: Spring Boot tạm dừng connector và chờ các request đang chạy. Request mới gửi vào một kết nối
+            // đã mở: Tomcat đóng kết nối (hoặc trả 503) mà không xử lý. Gửi lại sang instance khác vì vậy luôn an toàn,
+            // nhưng Nginx không gửi lại POST, PATCH đã gửi đi: hai phương thức đó đi kết nối mới (deploy/nginx/http.conf),
+            // bị từ chối ngay ở bước kết nối, trước khi gửi request.
+            await(api::isPaused, "Spring Boot pauses the connector");
             assertThat(notServed(keepAlive, request(port, "PUT", "/diagrams/" + other, token,
                     updateBody(1, "Sent on a kept connection while draining")))).isTrue();
             assertThat(shutdown).isNotDone();
@@ -150,9 +169,9 @@ class GracefulShutdownE2eTest {
 
     // ------------------------------------------------------------------ helpers
 
-    private static ConfigurableApplicationContext instance() {
+    private static ConfigurableApplicationContext instance(String... extra) {
         var postgres = E2eTestBase.postgres;   // container dùng chung của bộ E2E
-        return new SpringApplicationBuilder(DiagramioApplication.class).run(
+        List<String> args = new ArrayList<>(List.of(
                 "--server.port=0",
                 "--management.server.port=0",
                 "--spring.datasource.url=" + postgres.getJdbcUrl(),
@@ -161,7 +180,9 @@ class GracefulShutdownE2eTest {
                 "--spring.data.redis.host=" + redis.getHost(),
                 "--spring.data.redis.port=" + redis.getMappedPort(6379),
                 "--diagramio.cache.mode=two-level",
-                "--diagramio.cache.monitor-interval=100ms");
+                "--diagramio.cache.monitor-interval=100ms"));
+        args.addAll(List.of(extra));
+        return new SpringApplicationBuilder(DiagramioApplication.class).run(args.toArray(String[]::new));
     }
 
     /**
@@ -211,7 +232,7 @@ class GracefulShutdownE2eTest {
 
     private static boolean accepts(int port) {
         try (Socket socket = new Socket()) {
-            socket.connect(new InetSocketAddress("127.0.0.1", port), 500);
+            socket.connect(new InetSocketAddress("127.0.0.1", port), 200);
             return true;
         } catch (ConnectException e) {
             return false;

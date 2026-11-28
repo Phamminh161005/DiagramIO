@@ -5,9 +5,10 @@ import org.apache.catalina.connector.Connector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.web.context.WebServerApplicationContext;
 import org.springframework.boot.web.context.WebServerGracefulShutdownLifecycle;
 import org.springframework.boot.web.embedded.tomcat.TomcatWebServer;
-import org.springframework.boot.web.servlet.context.ServletWebServerApplicationContext;
+import org.springframework.context.ApplicationContext;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -26,12 +27,16 @@ import org.springframework.context.annotation.Configuration;
  * mỗi cách: mặc định của Spring Boot 7 POST nhận 502, có bean này 3. Phần còn lại là kết nối đã bắt tay xong nhưng còn
  * nằm trong hàng đợi của nhân hệ điều hành, bị reset khi cổng đóng: chỉ hết hẳn khi load balancer ngừng gửi tới instance
  * trước khi nó tắt (đánh dấu {@code down}, deploy/rolling-restart.sh): 0 lỗi trong 18 lần. GET, PUT không lỗi lần nào.
+ *
+ * <p>Context không có web server thật (test {@code @SpringBootTest} mặc định chạy trên servlet giả) thì bean không làm
+ * gì: nó nhận {@link ApplicationContext} chứ không đòi một {@code ServletWebServerApplicationContext}, vì kiểu đó không
+ * có trong các context như vậy và context sẽ không khởi động được.
  */
 @Configuration
 public class ShutdownConfig {
 
     @Bean
-    public SmartLifecycle stopAcceptingBeforeDrain(ServletWebServerApplicationContext context,
+    public SmartLifecycle stopAcceptingBeforeDrain(ApplicationContext context,
             @Value("${diagramio.http.shutdown-accept-grace:500ms}") Duration acceptGrace) {
         return new StopAcceptingBeforeDrain(context, acceptGrace);
     }
@@ -43,11 +48,11 @@ public class ShutdownConfig {
         /** Dừng ngay trước bước tắt êm của Spring Boot (phase lớn hơn dừng trước). */
         static final int PHASE = WebServerGracefulShutdownLifecycle.SMART_LIFECYCLE_PHASE + 1;
 
-        private final ServletWebServerApplicationContext context;
+        private final ApplicationContext context;
         private final Duration acceptGrace;
         private volatile boolean running;
 
-        StopAcceptingBeforeDrain(ServletWebServerApplicationContext context, Duration acceptGrace) {
+        StopAcceptingBeforeDrain(ApplicationContext context, Duration acceptGrace) {
             this.context = context;
             this.acceptGrace = acceptGrace;
         }
@@ -63,7 +68,8 @@ public class ShutdownConfig {
                 return;
             }
             running = false;
-            if (!(context.getWebServer() instanceof TomcatWebServer tomcat)) {
+            if (!(context instanceof WebServerApplicationContext web)
+                    || !(web.getWebServer() instanceof TomcatWebServer tomcat)) {
                 return;
             }
             for (Connector connector : tomcat.getTomcat().getService().findConnectors()) {
